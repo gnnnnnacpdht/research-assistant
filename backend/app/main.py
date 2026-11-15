@@ -1,9 +1,12 @@
-"""FastAPI 应用入口：提供系统健康检查与交互式 API 文档。"""
+"""FastAPI 应用入口：提供系统健康检查、论文接口与交互式 API 文档。"""
 
 import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from . import db
+from .routers import papers
 
 app = FastAPI(
     title="科研助手 API",
@@ -20,6 +23,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 导入即建表（IF NOT EXISTS），保证首次启动就有可用的数据库结构。
+db.init_db()
+
+app.include_router(papers.router)
 
 
 @app.get("/api/health", tags=["系统"])

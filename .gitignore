@@ -17,6 +17,10 @@ node_modules/
 out/
 *.tsbuildinfo
 
+# 运行时数据：上传的 PDF 与 SQLite 数据库
+backend/data/
+*.db
+
 # 日志与系统文件
 *.log
 .DS_Store

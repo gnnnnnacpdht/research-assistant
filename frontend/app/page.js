@@ -8,10 +8,13 @@ export default function Home() {
         <p className="eyebrow">AI RESEARCH ASSISTANT</p>
         <h1>科研助手</h1>
         <p className="intro">
-          前后端项目骨架已就绪，后续将在此接入 PDF 解析、抗幻觉问答与语义去重。
+          上传 PDF 即可完成文本解析入库，后续将在此接入抗幻觉问答与语义去重。
         </p>
         <div className="actions">
-          <a className="primary" href={`${apiBaseUrl}/api/health`}>
+          <a className="primary" href="/papers">
+            进入论文库
+          </a>
+          <a className="secondary" href={`${apiBaseUrl}/api/health`}>
             检查后端状态
           </a>
           <a className="secondary" href={`${apiBaseUrl}/docs`}>
