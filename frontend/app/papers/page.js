@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -15,6 +15,8 @@ export default function PapersPage() {
   const [listError, setListError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  // 用 ref 持有文件输入框：await 之后合成事件的 currentTarget 会被置空，不能再依赖它。
+  const fileInputRef = useRef(null);
 
   // 拉取论文列表；上传成功后复用同一函数实现自动刷新。
   const loadPapers = useCallback(async () => {
@@ -40,7 +42,7 @@ export default function PapersPage() {
 
   async function handleUpload(event) {
     event.preventDefault();
-    const file = event.currentTarget.elements.pdf.files[0];
+    const file = fileInputRef.current?.files?.[0];
     if (!file) {
       setMessage("请先选择一个 PDF 文件");
       return;
@@ -63,7 +65,10 @@ export default function PapersPage() {
       setMessage(
         `已入库：${data.filename}（${data.page_count} 页，${data.text_chars} 字符）`,
       );
-      event.currentTarget.reset();
+      // 清空已选文件，方便连续上传下一份。
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       await loadPapers();
     } catch (error) {
       setMessage(error.message);
@@ -88,7 +93,7 @@ export default function PapersPage() {
       <section className="card">
         <h2>上传 PDF</h2>
         <form className="upload-form" onSubmit={handleUpload}>
-          <input name="pdf" type="file" accept="application/pdf,.pdf" />
+          <input ref={fileInputRef} name="pdf" type="file" accept="application/pdf,.pdf" />
           <button className="primary" type="submit" disabled={uploading}>
             {uploading ? "解析中…" : "上传并解析"}
           </button>
