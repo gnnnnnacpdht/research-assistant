@@ -21,6 +21,9 @@ out/
 backend/data/
 *.db
 
+# 官方测试 PDF（体积大，不入库）
+pdf/
+
 # 日志与系统文件
 *.log
 .DS_Store
