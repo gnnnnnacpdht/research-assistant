@@ -780,48 +780,99 @@ button.danger:hover {
 
 .graph-stat { font-size: 13px; color: #64748b; margin-left: auto; }
 
-.graph-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 18px;
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .graph-body { grid-template-columns: 1fr; }
-}
-
-.graph-canvas {
-  position: relative;
-  height: calc(100vh - 170px);
-  min-height: 560px;
+/* 顶部统计条：文献数 / 引用关系数 / 基石文献数 */
+.graph-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fff;
+  font-size: 13px;
+  color: #475569;
+}
+
+.graph-stats strong { color: #1d4ed8; font-size: 15px; }
+
+.graph-stats-divider { color: #cbd5e1; }
+
+.graph-stats-hint { margin-left: auto; font-size: 12px; color: #94a3b8; }
+
+.graph-canvas {
+  position: relative;
+  height: calc(100vh - 215px);
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
   overflow: hidden;
 }
 
-.graph-tooltip {
-  position: absolute;
-  left: 16px;
-  bottom: 16px;
-  max-width: 420px;
-  padding: 10px 14px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #fff;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.6;
+/* ECharts 容器必须给明确尺寸，否则 init 拿到 0 高度画不出图 */
+.graph-chart { width: 100%; height: 100%; }
+
+/* 空状态：无参考文献时占满画布，不留白板 */
+.graph-empty {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  pointer-events: none;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px;
+  text-align: center;
+  color: #334155;
+  font-size: 15px;
 }
 
-.graph-tooltip span { color: #cbd5e1; }
+.graph-empty-tip {
+  max-width: 520px;
+  margin-top: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+/* 右侧详情抽屉 */
+.graph-drawer {
+  position: fixed;
+  top: 92px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 150;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  overflow-y: auto;
+  transform: translateX(calc(100% + 32px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.graph-drawer.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
+
+.graph-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.graph-drawer-head h2 { margin: 0; font-size: 16px; }
 
 /* 画布右下角图例：说明颜色与节点大小的含义 */
 .graph-legend {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -833,6 +884,7 @@ button.danger:hover {
   font-size: 12px;
   line-height: 1.5;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
 }
 
 .legend-title { font-size: 12px; font-weight: 700; color: #334155; }
@@ -847,8 +899,9 @@ button.danger:hover {
 }
 
 .legend-dot.root { background: #1d4ed8; border: 2px solid #93b4ff; }
-.legend-dot.high { background: #f59e0b; }
+.legend-dot.high { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.8); }
 .legend-dot.mid { background: #38bdf8; }
+.legend-dot.ref { background: #3b82f6; }
 .legend-dot.low { background: #e2e8f0; border: 1px solid #cbd5e1; }
 
 .legend-note { margin-top: 2px; color: #94a3b8; }

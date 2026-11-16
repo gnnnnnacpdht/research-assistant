@@ -1,117 +1,193 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  Background,
-  Controls,
-  Panel,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import * as echarts from "echarts/core";
+import { GraphChart } from "echarts/charts";
+import { TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 
 import { apiBaseUrl } from "../../lib/apiBase";
 
-// 节点半径：importance 越高越大，但限制在可读范围内
-function nodeDiameter(importance, isRoot) {
-  if (isRoot) return 92;
-  const scaled = 30 + (importance / 100) * 58;
-  return Math.round(scaled);
+// 按需注册，避免把整个 echarts 打进来（图谱只需要 graph + tooltip + canvas 渲染）
+echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
+
+const COLOR_ROOT = "#1D4ED8"; // 本论文：深蓝 + 白边
+const COLOR_KEY = "#F59E0B"; // 基石文献：橙金 + 光晕
+const COLOR_REF = "#3B82F6"; // 普通引用：蓝
+const COLOR_LINK = "#94A3B8";
+const BG = "#F8FAFC"; // 与全站浅色主题一致
+
+// 标签截断：超过 max 个字符用省略号，避免长标题糊满画布
+function shortTitle(title, max = 12) {
+  const text = (title || "").trim() || "标题未解析";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function buildLayout(data) {
-  const nodes = data.nodes || [];
-  const root =
-    nodes.find((node) => node.kind === "root") ||
-    nodes.find((node) => String(node.id).startsWith("paper-"));
-  // 兜底：后端若没给 kind 字段，就按"除中心外的都是引用"处理，避免整页只剩一个节点
-  const refs = nodes.filter((node) =>
-    node.kind ? node.kind === "reference" : node !== root,
-  );
+// 节点半径由 importance 线性映射到 14-42px
+function symbolSize(importance) {
+  const value = Number(importance) || 0;
+  return Math.round(14 + (Math.min(100, Math.max(0, value)) / 100) * 28);
+}
 
-  // 以本论文为中心，被引文献按重要性从 12 点方向顺时针辐射
-  const radius = Math.max(330, refs.length * 16);
-  const layoutNodes = [];
+// 把接口数据折算成 ECharts 需要的节点/连线，并标注"基石"与"常显标签"两批节点
+function buildChartData(data) {
+  const allNodes = data.nodes || [];
+  const refs = allNodes.filter((node) => node.kind !== "root");
+  const root = allNodes.find((node) => node.kind === "root");
+
+  const sorted = [...refs].sort((a, b) => b.importance - a.importance);
+  // 基石文献 = importance 前 15%（至少 1 篇）
+  const keyCount = Math.max(1, Math.round(sorted.length * 0.15));
+  const keyIds = new Set(sorted.slice(0, keyCount).map((node) => node.id));
+  // importance 前 10 的节点常显标题，其余只在 tooltip 里看
+  const labelIds = new Set(sorted.slice(0, 10).map((node) => node.id));
+
+  const nodes = [];
 
   if (root) {
-    layoutNodes.push({
+    nodes.push({
       id: root.id,
-      position: { x: -46, y: -46 },
-      data: { label: "本\n论\n文", meta: root },
-      type: "default",
-      style: {
-        width: 92,
-        height: 92,
-        borderRadius: "50%",
-        background: "#1d4ed8",
+      name: "本论文",
+      x: 0,
+      y: 0,
+      fixed: true, // 力导向时钉在画布中央，其它节点围着它散开
+      symbolSize: 56,
+      itemStyle: {
+        color: COLOR_ROOT,
+        borderColor: "#fff",
+        borderWidth: 3,
+        shadowBlur: 22,
+        shadowColor: "rgba(29,78,216,0.45)",
+      },
+      label: {
+        show: true,
+        position: "inside",
         color: "#fff",
         fontSize: 12,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
         fontWeight: 600,
-        border: "3px solid #93b4ff",
       },
+      meta: root,
     });
   }
 
-  refs.forEach((node, position) => {
-    const angle = (2 * Math.PI * position) / Math.max(refs.length, 1) - Math.PI / 2;
-    const size = nodeDiameter(node.importance, false);
-    layoutNodes.push({
+  for (const node of refs) {
+    const isKey = keyIds.has(node.id);
+    nodes.push({
       id: node.id,
-      position: {
-        x: Math.cos(angle) * radius - size / 2,
-        y: Math.sin(angle) * radius - size / 2,
+      name: `[${node.index}] ${shortTitle(node.title)}`,
+      symbolSize: symbolSize(node.importance),
+      itemStyle: {
+        color: isKey ? COLOR_KEY : COLOR_REF,
+        borderColor: "#fff",
+        borderWidth: 1.5,
+        shadowBlur: isKey ? 18 : 0, // 基石文献带橙色光晕
+        shadowColor: isKey ? "rgba(245,158,11,0.65)" : "transparent",
       },
-      data: {
-        label: `[${node.index}]`,
-        meta: node,
+      label: {
+        show: labelIds.has(node.id),
+        position: "right",
+        fontSize: 12,
+        color: "#334155",
+        formatter: () => shortTitle(node.title),
       },
-      style: {
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background:
-          node.importance >= 80
-            ? "#f59e0b"
-            : node.importance >= 60
-              ? "#38bdf8"
-              : "#e2e8f0",
-        color: node.importance >= 60 ? "#fff" : "#334155",
-        fontSize: 11,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontWeight: 600,
-        border: "2px solid #fff",
-        boxShadow: "0 2px 8px rgba(15,23,42,.18)",
-      },
+      meta: node,
     });
-  });
+  }
 
-  const edges = (data.edges || []).map((edge) => ({
-    id: `${edge.source}-${edge.target}`,
+  const links = (data.edges || []).map((edge) => ({
     source: edge.source,
     target: edge.target,
-    animated: edge.weight > 1,
-    style: { stroke: "#cbd5e1", strokeWidth: Math.min(3, 0.8 + edge.weight * 0.4) },
+    value: edge.weight,
+    lineStyle: { width: Math.min(3, 0.8 + (edge.weight || 1) * 0.35) },
   }));
 
-  return { nodes: layoutNodes, edges };
+  return { refs, keyCount, nodes, links };
+}
+
+// tooltip：引用节点展示标题/年份/被引次数/importance，连线只提示权重
+function tooltipFormatter(params) {
+  if (params.dataType === "edge") {
+    return (
+      `<div style="font-size:12px;line-height:1.6">引用关系<br/>` +
+      `权重 ${params.data?.value ?? 1}（正文提及越多越高）</div>`
+    );
+  }
+  const meta = params.data?.meta || {};
+  if (meta.kind === "root") {
+    return `<div style="font-size:12px;line-height:1.7"><strong>本论文</strong><br/>${meta.title || ""}</div>`;
+  }
+  return (
+    `<div style="font-size:12px;line-height:1.7;max-width:320px">` +
+    `<strong>[${meta.index}] ${meta.title || "标题未解析"}</strong><br/>` +
+    `年份：${meta.year ?? "未知"}<br/>` +
+    `正文提及：${meta.mentions ?? 0} 次<br/>` +
+    `importance：${meta.importance ?? "-"}` +
+    `</div>`
+  );
+}
+
+function buildOption(chartData) {
+  return {
+    backgroundColor: BG,
+    tooltip: {
+      trigger: "item",
+      confine: true,
+      backgroundColor: "rgba(15,23,42,0.94)",
+      borderWidth: 0,
+      textStyle: { color: "#e2e8f0" },
+      formatter: tooltipFormatter,
+    },
+    series: [
+      {
+        type: "graph",
+        layout: "force",
+        roam: true, // 滚轮缩放 + 拖拽平移
+        draggable: true, // 节点可拖动
+        force: {
+          repulsion: 320,
+          edgeLength: [70, 150],
+          gravity: 0.06,
+          layoutAnimation: true,
+        },
+        data: chartData.nodes,
+        links: chartData.links,
+        lineStyle: {
+          color: COLOR_LINK,
+          opacity: 0.35,
+          width: 1.2,
+          curveness: 0.2, // 曲线，避免直线交叉成网格
+        },
+        itemStyle: { borderColor: "#fff", borderWidth: 1.5 },
+        label: { show: false },
+        // 悬停：高亮相邻节点/连线，其余淡化
+        emphasis: {
+          focus: "adjacency",
+          scale: 1.05,
+          itemStyle: { shadowBlur: 24, shadowColor: "rgba(37,99,235,0.55)" },
+          lineStyle: { color: COLOR_ROOT, opacity: 1, width: 2.4 },
+          label: { show: true, color: "#1e293b", fontWeight: 600 },
+        },
+        blur: {
+          itemStyle: { opacity: 0.18 },
+          lineStyle: { opacity: 0.08 },
+          label: { opacity: 0.12 },
+        },
+      },
+    ],
+  };
 }
 
 function GraphInner() {
   const searchParams = useSearchParams();
   const paperId = Number(searchParams.get("paper_id") || 24);
-  const reactFlow = useReactFlow();
+
+  const chartRef = useRef(null);
+  const containerRef = useRef(null);
 
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
-  const [hovered, setHovered] = useState(null);
   // 自动综述弹层
   const [survey, setSurvey] = useState(null);
   const [surveyOpen, setSurveyOpen] = useState(false);
@@ -137,6 +213,42 @@ function GraphInner() {
       cancelled = true;
     };
   }, [paperId]);
+
+  const chartData = useMemo(() => (data ? buildChartData(data) : null), [data]);
+
+  // 初始化 ECharts：数据就绪后建图，窗口尺寸变化时自适应
+  useEffect(() => {
+    if (!chartData || chartData.refs.length === 0) return undefined;
+    const chart = echarts.init(containerRef.current, null, { renderer: "canvas" });
+    chartRef.current = chart;
+    chart.setOption(buildOption(chartData), true);
+
+    // 点击节点 → 打开右侧抽屉
+    chart.on("click", (params) => {
+      if (params.dataType === "node" && params.data?.meta) {
+        setSelected(params.data.meta);
+      }
+    });
+
+    const onResize = () => chart.resize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      chart.dispose();
+      chartRef.current = null;
+    };
+  }, [chartData]);
+
+  // Esc 关闭抽屉 / 综述弹层
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key !== "Escape") return;
+      if (surveyOpen) closeSurvey();
+      else if (selected) setSelected(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   // 生成综述：首次命中后端缓存，refresh=true 强制重新生成
   async function generateSurvey(refresh = false) {
@@ -188,45 +300,6 @@ function GraphInner() {
     setCopied(false);
   }
 
-  // Esc 关闭弹层：遮罩点击、右上角 ✕ 之外的第三种退出方式
-  useEffect(() => {
-    if (!surveyOpen) return undefined;
-    function onKeyDown(event) {
-      if (event.key === "Escape") closeSurvey();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [surveyOpen]);
-
-  const flow = useMemo(() => (data ? buildLayout(data) : { nodes: [], edges: [] }), [data]);
-
-  // 节点数据就绪后再适配一次视野：初次挂载时节点尺寸还没测量完，
-  // fitView 可能按 0 尺寸计算，导致右侧/下方节点被裁出画布。
-  useEffect(() => {
-    if (flow.nodes.length === 0) return undefined;
-    const timer = setTimeout(() => {
-      reactFlow.fitView({ padding: 0.15 });
-    }, 60);
-    return () => clearTimeout(timer);
-  }, [flow, reactFlow]);
-
-  // 兜底：后端没返回 top5 时，用节点的 importance 现场排序，保证列表不为空
-  const top5 = useMemo(() => {
-    if (!data) return [];
-    if (data.top5?.length) return data.top5;
-    return (data.nodes || [])
-      .filter((node) => node.kind !== "root" && node.index)
-      .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
-      .slice(0, 5)
-      .map((node) => ({
-        index: node.index,
-        title: node.title,
-        year: node.year,
-        importance: node.importance,
-        reason: `重要性 ${node.importance}`,
-      }));
-  }, [data]);
-
   if (error) {
     return (
       <main className="container">
@@ -246,6 +319,9 @@ function GraphInner() {
     );
   }
 
+  const edgeCount = (data.edges || []).length;
+  const empty = chartData.refs.length === 0;
+
   return (
     <main className="graph-page">
       <header className="read-head">
@@ -253,38 +329,47 @@ function GraphInner() {
           ← 论文库
         </a>
         <span className="read-title">引用图谱 · {data.filename}</span>
-        <span className="graph-stat">
-          {data.node_count} 条被引文献 · 参考文献起始 P.{data.reference_page ?? "?"}
-        </span>
         <button
           className="primary"
           type="button"
           onClick={() => generateSurvey(false)}
-          disabled={surveyLoading}
+          disabled={surveyLoading || empty}
         >
           {surveyLoading ? "生成中…" : "生成综述"}
         </button>
       </header>
 
-      <div className="graph-body">
-        <div className="graph-canvas">
-          <ReactFlow
-            nodes={flow.nodes}
-            edges={flow.edges}
-            fitView
-            fitViewOptions={{ padding: 0.15 }}
-            minZoom={0.05}
-            maxZoom={1.8}
-            onNodeClick={(_, node) => setSelected(node.data.meta)}
-            onNodeMouseEnter={(_, node) => setHovered(node.data.meta)}
-            onNodeMouseLeave={() => setHovered(null)}
-            nodesConnectable={false}
-            edgesFocusable={false}
-          >
-            <Background gap={18} color="#e2e8f0" />
-            <Controls showInteractive={false} />
-            {/* 右下角图例：替代原来只会画缩略图的空白 MiniMap */}
-            <Panel position="bottom-right" className="graph-legend">
+      {/* 顶部统计条 */}
+      <div className="graph-stats">
+        <span>
+          <strong>{chartData.refs.length}</strong> 篇文献
+        </span>
+        <span className="graph-stats-divider">|</span>
+        <span>
+          <strong>{edgeCount}</strong> 条引用关系
+        </span>
+        <span className="graph-stats-divider">|</span>
+        <span>
+          基石文献 <strong>{empty ? 0 : chartData.keyCount}</strong> 篇
+        </span>
+        <span className="graph-stats-hint">
+          {empty ? "" : "拖拽节点、滚轮缩放，点击节点查看详情"}
+        </span>
+      </div>
+
+      <div className="graph-canvas">
+        {empty ? (
+          <div className="graph-empty">
+            <p>该论文未解析到参考文献</p>
+            <p className="graph-empty-tip">
+              如果 PDF 末尾的 References 是图片或使用了特殊排版，解析可能为空；可回到论文库重新上传，或在阅读页「结构化视图」确认参考文献条目。
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="graph-chart" ref={containerRef} />
+            {/* 固定图例 */}
+            <div className="graph-legend">
               <span className="legend-title">图例</span>
               <span className="legend-row">
                 <i className="legend-dot root" />
@@ -292,87 +377,63 @@ function GraphInner() {
               </span>
               <span className="legend-row">
                 <i className="legend-dot high" />
-                基石文献（重要性 ≥ 80）
+                基石文献（importance 前 15%）
               </span>
               <span className="legend-row">
-                <i className="legend-dot mid" />
-                重要引用（60–79）
+                <i className="legend-dot ref" />
+                普通引用
               </span>
-              <span className="legend-row">
-                <i className="legend-dot low" />
-                普通引用（&lt; 60）
-              </span>
-              <span className="legend-note">节点越大 = importance 分数越高</span>
-            </Panel>
-          </ReactFlow>
-
-          {hovered ? (
-            <div className="graph-tooltip">
-              <strong>
-                [{hovered.index}] {hovered.title}
-              </strong>
-              <span>
-                {hovered.year ? `${hovered.year} 年` : "年份未知"} · 重要性{" "}
-                {hovered.importance}
-              </span>
+              <span className="legend-note">圆越大 = 影响力（importance）越高</span>
             </div>
-          ) : null}
-        </div>
-
-        <aside className="graph-side">
-          <section className="card compact-card">
-            <h2>基石文献 Top5</h2>
-            <ol className="corner-list">
-              {top5.map((item) => (
-                <li key={item.index}>
-                  <div className="corner-head">
-                    <span className="corner-rank">[{item.index}]</span>
-                    <span className="corner-score">{item.importance}</span>
-                  </div>
-                  <p className="corner-title">{item.title || "（标题解析失败）"}</p>
-                  <p className="corner-reason">
-                    {item.year ? `${item.year} · ` : ""}
-                    {item.reason}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          </section>
-
-          <section className="card compact-card">
-            <h2>节点信息</h2>
-            {selected ? (
-              <div className="node-detail">
-                <p className="node-title">
-                  [{selected.index}] {selected.title}
-                </p>
-                <p className="node-line">
-                  <span>作者</span>
-                  {selected.authors || "未解析"}
-                </p>
-                <p className="node-line">
-                  <span>年份</span>
-                  {selected.year ?? "未知"}
-                </p>
-                <p className="node-line">
-                  <span>页面</span>P.{selected.page}
-                </p>
-                <p className="node-line">
-                  <span>正文提及</span>
-                  {selected.mentions} 次
-                </p>
-                <p className="node-line">
-                  <span>重要性</span>
-                  {selected.importance}
-                </p>
-                <p className="node-raw">{selected.text}</p>
-              </div>
-            ) : (
-              <p className="message">点击图中任一节点查看文献信息。</p>
-            )}
-          </section>
-        </aside>
+          </>
+        )}
       </div>
+
+      {/* 右侧抽屉：点击节点后滑出 */}
+      <aside className={selected ? "graph-drawer open" : "graph-drawer"}>
+        <div className="graph-drawer-head">
+          <h2>文献详情</h2>
+          <button
+            type="button"
+            className="modal-close"
+            aria-label="关闭详情"
+            onClick={() => setSelected(null)}
+          >
+            ✕
+          </button>
+        </div>
+        {selected ? (
+          <div className="node-detail">
+            <p className="node-title">
+              [{selected.index}] {selected.title || "标题未解析"}
+            </p>
+            <p className="node-line">
+              <span>作者</span>
+              {selected.authors || "未解析"}
+            </p>
+            <p className="node-line">
+              <span>年份</span>
+              {selected.year ?? "未知"}
+            </p>
+            <p className="node-line">
+              <span>参考文献页</span>P.{selected.page}
+            </p>
+            <p className="node-line">
+              <span>正文提及</span>
+              {selected.mentions} 次
+            </p>
+            <p className="node-line">
+              <span>importance</span>
+              {selected.importance}
+            </p>
+            <p className="node-line">
+              <span>PageRank</span>
+              {selected.pagerank}
+            </p>
+            <p className="node-raw">{selected.text}</p>
+          </div>
+        ) : null}
+      </aside>
 
       {surveyOpen ? (
         <div className="modal-backdrop" onClick={closeSurvey}>
@@ -451,9 +512,7 @@ function GraphInner() {
 export default function GraphPage() {
   return (
     <Suspense fallback={<main className="container">加载中…</main>}>
-      <ReactFlowProvider>
-        <GraphInner />
-      </ReactFlowProvider>
+      <GraphInner />
     </Suspense>
   );
 }

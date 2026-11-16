@@ -158,7 +158,7 @@ def build_citation_graph(paper_id: int) -> dict:
 
     max_rank = max((ranks.get(node, 0) for node in node_meta), default=1) or 1
     max_mentions = max((meta["mentions"] for meta in node_meta.values()), default=1) or 1
-    current_year = max((meta["year"] or 0) for meta in node_meta.values()) or 2017
+    current_year = max((meta["year"] or 0 for meta in node_meta.values()), default=0) or 2017
 
     nodes: list[dict] = []
     for node_id, meta in node_meta.items():
