@@ -1,6 +1,7 @@
 """FastAPI 应用入口：提供系统健康检查、论文接口、RAG 问答接口与 API 文档。"""
 
 import logging
+import mimetypes
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -70,6 +71,11 @@ def health_check() -> dict[str, str]:
 # 由本服务在根路径托管，一个容器一个端口同时提供页面与 /api，因此无需任何跨域配置。
 # 该挂载必须放在所有 API 路由之后，否则 "/" 会抢占 /api/* 的匹配。
 logger = logging.getLogger("uvicorn.error")
+
+# Windows 上 Python 的 mimetypes 不识别 .mjs，默认按 text/plain 返回，
+# 浏览器会拒绝把它当作 ES module 加载（pdf.js worker 报 Failed to fetch dynamically imported module）。
+mimetypes.add_type("text/javascript", ".mjs")
+
 FRONTEND_DIST = Path(
     os.getenv("FRONTEND_DIST", Path(__file__).resolve().parent.parent.parent / "frontend" / "out")
 )

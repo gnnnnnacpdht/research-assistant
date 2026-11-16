@@ -6,8 +6,10 @@ import * as pdfjsLib from "pdfjs-dist";
 
 import { apiBaseUrl } from "../../lib/apiBase";
 
-// worker 文件由构建时复制到 public/，避免从 CDN 拉取（内网/演示环境更稳）
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+// worker 文件由构建时复制到 public/，避免从 CDN 拉取（内网/演示环境更稳）。
+// 带版本查询串：文件内容不变时浏览器会 304 复用旧响应头（曾把 .mjs 缓存成 text/plain），
+// 换一个 URL 可强制重新拉取，避免模块 MIME 校验失败的假死。
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs?v=4.10.38";
 
 const CITATION_RE = /\[(\d{1,3})\]/g;
 
