@@ -37,46 +37,58 @@ function buildHeadingTree(headings) {
 }
 
 // 可折叠标题树；点击标题跳到对应页，但不要顺带折叠/展开。
-function HeadingTree({ nodes, onJump }) {
+// activeKey 命中时高亮：用于目录面板标记"当前页码所属章节"。
+function HeadingTree({ nodes, onJump, activeKey }) {
   if (!nodes || nodes.length === 0) {
     return null;
   }
   return (
     <ul className="struct-tree">
-      {nodes.map((node) => (
-        <li key={`${node.level}-${node.page_num}-${node.content}`}>
-          {node.children.length > 0 ? (
-            <details open={node.level <= 2}>
-              <summary>
+      {nodes.map((node) => {
+        const nodeKey = `${node.level}-${node.page_num}-${node.content}`;
+        return (
+          <li key={nodeKey}>
+            {node.children.length > 0 ? (
+              <details open={node.level <= 2}>
+                <summary>
+                  <button
+                    type="button"
+                    className={
+                      nodeKey === activeKey ? "struct-heading active" : "struct-heading"
+                    }
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onJump(node.page_num);
+                    }}
+                  >
+                    {node.content}
+                  </button>
+                  <span className="struct-page">P.{node.page_num}</span>
+                </summary>
+                <HeadingTree
+                  nodes={node.children}
+                  onJump={onJump}
+                  activeKey={activeKey}
+                />
+              </details>
+            ) : (
+              <div className="struct-leaf">
                 <button
                   type="button"
-                  className="struct-heading"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onJump(node.page_num);
-                  }}
+                  className={
+                    nodeKey === activeKey ? "struct-heading active" : "struct-heading"
+                  }
+                  onClick={() => onJump(node.page_num)}
                 >
                   {node.content}
                 </button>
                 <span className="struct-page">P.{node.page_num}</span>
-              </summary>
-              <HeadingTree nodes={node.children} onJump={onJump} />
-            </details>
-          ) : (
-            <div className="struct-leaf">
-              <button
-                type="button"
-                className="struct-heading"
-                onClick={() => onJump(node.page_num)}
-              >
-                {node.content}
-              </button>
-              <span className="struct-page">P.{node.page_num}</span>
-            </div>
-          )}
-        </li>
-      ))}
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -90,6 +102,10 @@ function ReadPageInner() {
   const pdfDocRef = useRef(null);
   const renderTaskRef = useRef(null);
   const translateCacheRef = useRef(new Map()); // 页码 → 译文，减少重复请求
+  const pdfScrollRef = useRef(null); // 左侧 PDF 滚动容器
+  const sideScrollRef = useRef(null); // 右侧译文滚动容器
+  const syncLockRef = useRef({ side: "", at: 0 }); // 防止两栏互相触发的滚动死循环
+  const bulkAbortRef = useRef(false); // 整篇翻译的中断标记（切论文/卸载时置位）
 
   const [pageNum, setPageNum] = useState(1);
   const [pageCount, setPageCount] = useState(0);
@@ -101,6 +117,12 @@ function ReadPageInner() {
   const [translating, setTranslating] = useState(false);
   const [status, setStatus] = useState("正在加载 PDF…");
   const [error, setError] = useState("");
+
+  // 目录面板开合、左右同步滚动开关
+  const [tocOpen, setTocOpen] = useState(true);
+  const [syncScroll, setSyncScroll] = useState(true);
+  // 整篇翻译进度：{done,total,running,failed}
+  const [bulk, setBulk] = useState(null);
 
   const [tab, setTab] = useState("translate"); // translate | references | structure
   const [references, setReferences] = useState({ entries: [], first_pages: {} });
@@ -289,6 +311,87 @@ function ReadPageInner() {
       .catch((error) => setStructureError(error.message));
   }, [paperId]);
 
+  // ===== 4c. 整篇翻译：按页顺序请求，命中缓存直接跳过 =====
+  // 只逐页串行调用（并发会打爆 LLM 限流），每完成一页刷新一次进度。
+  async function translateAll() {
+    if (bulk?.running || pageCount <= 0) return;
+    bulkAbortRef.current = false;
+    setTab("translate");
+    setBulk({ done: 0, total: pageCount, running: true, failed: 0 });
+
+    let failed = 0;
+    for (let page = 1; page <= pageCount; page += 1) {
+      if (bulkAbortRef.current) break;
+      if (!translateCacheRef.current.has(page)) {
+        try {
+          const textResp = await fetch(
+            `${apiBaseUrl}/api/papers/${paperId}/page/${page}`,
+            { cache: "no-store" },
+          );
+          const textData = await textResp.json().catch(() => ({}));
+          if (!textResp.ok) throw new Error(textData.detail ?? "取页面文本失败");
+
+          const trResp = await fetch(`${apiBaseUrl}/api/translate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: textData.text || "" }),
+          });
+          const trData = await trResp.json().catch(() => ({}));
+          if (!trResp.ok) throw new Error(trData.detail ?? "翻译失败");
+          // 写入同一个缓存，之后翻页/重进页面都直接复用
+          translateCacheRef.current.set(page, trData.translation);
+        } catch {
+          failed += 1; // 单页失败不中断，继续下一页
+        }
+      }
+      setBulk({
+        done: page,
+        total: pageCount,
+        running: page < pageCount,
+        failed,
+      });
+    }
+    setBulk((prev) => (prev ? { ...prev, running: false } : prev));
+  }
+
+  // 切换论文或卸载时终止仍在跑的整篇翻译，避免对已卸载组件 setState
+  useEffect(() => {
+    bulkAbortRef.current = false;
+    return () => {
+      bulkAbortRef.current = true;
+    };
+  }, [paperId]);
+
+  // 翻页后两栏都回到顶部，否则长滚动位置会把人带到页面中段
+  useEffect(() => {
+    if (pdfScrollRef.current) pdfScrollRef.current.scrollTop = 0;
+    if (sideScrollRef.current) sideScrollRef.current.scrollTop = 0;
+  }, [pageNum]);
+
+  // ===== 4d. 同步滚动：按百分比联动 =====
+  // 一侧滚动 → 计算其在自身可滚动区间里的比例 → 设置另一侧 scrollTop。
+  // 程序化设置会反过来触发对方的 onScroll，用 120ms 时间锁抑制回声。
+  const handleSyncScroll = useCallback(
+    (side) => {
+      if (!syncScroll || tab !== "translate") return;
+      const source = side === "pdf" ? pdfScrollRef.current : sideScrollRef.current;
+      const target = side === "pdf" ? sideScrollRef.current : pdfScrollRef.current;
+      if (!source || !target) return;
+
+      const now = performance.now();
+      const lock = syncLockRef.current;
+      if (lock.side && lock.side !== side && now - lock.at < 120) return;
+      syncLockRef.current = { side, at: now };
+
+      const sourceMax = source.scrollHeight - source.clientHeight;
+      const targetMax = target.scrollHeight - target.clientHeight;
+      if (sourceMax <= 0 || targetMax <= 0) return;
+      const ratio = Math.min(1, Math.max(0, source.scrollTop / sourceMax));
+      target.scrollTop = ratio * targetMax;
+    },
+    [syncScroll, tab],
+  );
+
   // ===== 5. 划词翻译：鼠标松开后取选区，显示浮动按钮 =====
   const handleMouseUp = useCallback(() => {
     const selection = window.getSelection();
@@ -398,6 +501,17 @@ function ReadPageInner() {
   const metaAuthor = structureByType("author")[0];
   const metaAbstract = structureByType("abstract")[0];
 
+  // 目录高亮：取"页码不大于当前页"的最后一个标题，即当前阅读位置所属章节
+  const activeHeadingKey = (() => {
+    let active = null;
+    for (const heading of headings) {
+      if (heading.page_num <= pageNum) active = heading;
+    }
+    return active
+      ? `${active.level}-${active.page_num}-${active.content}`
+      : null;
+  })();
+
   function jumpToStructPage(page) {
     if (page) setPageNum(Number(page));
   }
@@ -420,6 +534,25 @@ function ReadPageInner() {
           ← 论文库
         </a>
         <span className="read-title">双语联动阅读 · 论文 #{paperId}</span>
+        <div className="bulk-translate">
+          <button
+            className="secondary"
+            type="button"
+            onClick={translateAll}
+            disabled={Boolean(bulk?.running) || pageCount === 0}
+          >
+            {bulk?.running
+              ? `翻译中 ${bulk.done}/${bulk.total}`
+              : "整篇翻译"}
+          </button>
+          {bulk && !bulk.running ? (
+            <span className="bulk-status">
+              {bulk.failed > 0
+                ? `完成 ${bulk.total} 页，${bulk.failed} 页失败`
+                : `已完成 ${bulk.total} 页译文并缓存`}
+            </span>
+          ) : null}
+        </div>
         <div className="page-nav">
           <button
             className="secondary"
@@ -446,14 +579,66 @@ function ReadPageInner() {
       {error ? <p className="message error">{error}</p> : null}
       {status ? <p className="message">{status}</p> : null}
 
+      {bulk?.running ? (
+        <div className="bulk-bar">
+          <span
+            style={{
+              width: `${Math.round((bulk.done / Math.max(1, bulk.total)) * 100)}%`,
+            }}
+          />
+        </div>
+      ) : null}
+
       <div className="read-body">
-        {/* 左侧：pdf.js 原版 */}
+        {/* 左侧：标题目录 + pdf.js 原版 */}
         <section className="pdf-pane" onMouseUp={handleMouseUp}>
-          <div className="pdf-canvas-wrap">
-            <canvas ref={canvasRef} />
-            <div ref={textLayerRef} className="pdf-text-layer" />
+          <div className="toc-panel">
+            <div className="toc-head">
+              <button
+                type="button"
+                className="toc-toggle"
+                onClick={() => setTocOpen((value) => !value)}
+              >
+                {tocOpen ? "▾" : "▸"} 目录（{headings.length}）
+                {activeHeadingKey ? " · 当前章节已高亮" : ""}
+              </button>
+              <label className="sync-toggle">
+                <input
+                  type="checkbox"
+                  checked={syncScroll}
+                  onChange={(event) => setSyncScroll(event.target.checked)}
+                />
+                同步滚动
+              </label>
+            </div>
+            {tocOpen ? (
+              headings.length > 0 ? (
+                <div className="toc-body">
+                  <HeadingTree
+                    nodes={buildHeadingTree(headings)}
+                    onJump={jumpToStructPage}
+                    activeKey={activeHeadingKey}
+                  />
+                </div>
+              ) : (
+                <p className="toc-empty">
+                  该论文暂无标题结构（后台结构抽取完成后刷新本页可见）。
+                </p>
+              )
+            ) : null}
           </div>
-          <p className="pdf-tip">在页面上拖选英文，会弹出「翻译」按钮</p>
+
+          <div
+            className="pdf-scroll"
+            ref={pdfScrollRef}
+            onScroll={() => handleSyncScroll("pdf")}
+          >
+            <div className="pdf-canvas-wrap">
+              <canvas ref={canvasRef} />
+              <div ref={textLayerRef} className="pdf-text-layer" />
+            </div>
+            <p className="pdf-tip">在页面上拖选英文，会弹出「翻译」按钮</p>
+          </div>
         </section>
 
         {/* 右侧：翻译 / 参考文献 */}
@@ -483,7 +668,11 @@ function ReadPageInner() {
           </div>
 
           {tab === "translate" ? (
-            <div className="pane-content">
+            <div
+              className="pane-content"
+              ref={sideScrollRef}
+              onScroll={() => handleSyncScroll("side")}
+            >
               {citations.length > 0 ? (
                 <div className="citation-row">
                   <span className="citation-label">本页引用：</span>

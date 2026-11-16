@@ -906,10 +906,96 @@ button.danger:hover {
 }
 
 .pdf-pane {
+  display: flex;
+  flex-direction: column;
   background: #eef1f5;
   border-radius: 10px;
   padding: 16px;
-  min-height: 400px;
+  height: calc(100vh - 150px);
+  min-height: 420px;
+}
+
+/* 左侧 PDF 滚动容器：同步滚动以它为基准，百分比映射到右侧译文栏 */
+.pdf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 目录面板：与 PDF 滚动区分开，翻 PDF 时目录不跟着滚走 */
+.toc-panel {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.toc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toc-toggle {
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toc-toggle:hover { color: #1d4ed8; }
+
+.sync-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+}
+
+.sync-toggle input { accent-color: #2563eb; cursor: pointer; }
+
+.toc-body {
+  margin-top: 6px;
+  padding-right: 4px;
+  max-height: 28vh;
+  overflow-y: auto;
+}
+
+.toc-empty {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* 整篇翻译进度条（页头下方通栏） */
+.bulk-translate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bulk-status { font-size: 12px; color: #475569; }
+
+.bulk-bar {
+  height: 4px;
+  margin: 0 0 12px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.bulk-bar span {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+  transition: width 0.2s ease;
 }
 
 .pdf-canvas-wrap {
@@ -941,6 +1027,9 @@ button.danger:hover {
 }
 
 .side-pane {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 150px);
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -969,8 +1058,9 @@ button.danger:hover {
 }
 
 .pane-content {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 16px 18px 22px;
-  max-height: calc(100vh - 180px);
   overflow-y: auto;
 }
 
@@ -1165,6 +1255,15 @@ button.danger:hover {
 }
 
 .struct-heading:hover { color: #1d4ed8; text-decoration: underline; }
+
+/* 目录高亮：当前页码所属章节 */
+.struct-heading.active {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #e8eefc;
+  color: #1d4ed8;
+  font-weight: 700;
+}
 
 .struct-page {
   margin-left: 6px;
