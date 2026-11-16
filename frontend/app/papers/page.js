@@ -15,12 +15,16 @@ export default function PapersPage() {
   const [listError, setListError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
-  // 扫描件 OCR 失败等非致命问题单独存放，用醒目颜色提示但不阻断上传。
   const [warning, setWarning] = useState("");
-  // 用 ref 持有文件输入框：await 之后合成事件的 currentTarget 会被置空，不能再依赖它。
+  // 语义去重预警弹窗状态
+  const [dedupeToken, setDedupeToken] = useState("");
+  const [duplicates, setDuplicates] = useState([]);
+  const [dedupeFilename, setDedupeFilename] = useState("");
+  const [comparing, setComparing] = useState(false);
+  const [revisionSummary, setRevisionSummary] = useState("");
+  const [revisionTargetId, setRevisionTargetId] = useState(null);
   const fileInputRef = useRef(null);
 
-  // 拉取论文列表；上传成功后复用同一函数实现自动刷新。
   const loadPapers = useCallback(async () => {
     try {
       const response = await fetch(`${apiBaseUrl}/api/papers`, {
@@ -53,6 +57,8 @@ export default function PapersPage() {
     setUploading(true);
     setMessage("");
     setWarning("");
+    setRevisionSummary("");
+    setRevisionTargetId(null);
     const body = new FormData();
     body.append("file", file);
 
@@ -61,6 +67,16 @@ export default function PapersPage() {
         method: "POST",
         body,
       });
+
+      if (response.status === 309) {
+        // 后端检测到疑似重复，返回 JSONResponse 带 body（token/duplicates）+ headers
+        const dupData = await response.json().catch(() => ({}));
+        setDedupeToken(dupData.token || response.headers.get("X-Dedupe-Token") || "");
+        setDuplicates(dupData.duplicates || papers);
+        setDedupeFilename(dupData.filename || file.name);
+        return;
+      }
+
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.detail ?? `上传失败（HTTP ${response.status}）`);
@@ -72,7 +88,6 @@ export default function PapersPage() {
       if (data.warning) {
         setWarning(data.warning);
       }
-      // 清空已选文件，方便连续上传下一份。
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -84,7 +99,89 @@ export default function PapersPage() {
     }
   }
 
-  // 删除论文：二次确认后调用 DELETE，成功则刷新列表。
+  async function handleConfirm(action, replaceIds) {
+    if (!dedupeToken) return;
+    setUploading(true);
+    try {
+      const endpoint =
+        action === "keep"
+          ? "confirm-keep"
+          : action === "overwrite"
+            ? "confirm-overwrite"
+            : null;
+      if (!endpoint) return;
+
+      const payload = { token: dedupeToken };
+      if (replaceIds && action === "overwrite") {
+        payload.replace_ids = replaceIds;
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/papers/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail ?? `操作失败（HTTP ${response.status}）`);
+      }
+      setMessage(
+        `已${action === "overwrite" ? "覆盖入库" : "保留入库"}：${data.filename}（${data.page_count} 页）`,
+      );
+      closeDedupeDialog();
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await loadPapers();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleCompare(targetId) {
+    if (!dedupeToken) return;
+    setComparing(true);
+    setRevisionSummary("");
+    setRevisionTargetId(targetId);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/papers/compare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: dedupeToken, target_id: targetId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail ?? "对比失败");
+      setRevisionSummary(data.summary);
+      // compare 不消费 token，继续持有
+    } catch (error) {
+      setMessage("对比失败：" + error.message);
+    } finally {
+      setComparing(false);
+    }
+  }
+
+  async function handleCancel() {
+    if (!dedupeToken) return;
+    try {
+      await fetch(`${apiBaseUrl}/api/papers/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: dedupeToken }),
+      });
+    } catch {
+      /* ignore */
+    }
+    closeDedupeDialog();
+  }
+
+  function closeDedupeDialog() {
+    setDedupeToken("");
+    setDuplicates([]);
+    setDedupeFilename("");
+    setRevisionSummary("");
+    setRevisionTargetId(null);
+  }
+
   async function handleDelete(paper) {
     if (
       !window.confirm(
@@ -111,6 +208,7 @@ export default function PapersPage() {
     }
   }
 
+  // ========== 渲染 ==========
   return (
     <main className="container">
       <section className="page-head">
@@ -190,6 +288,76 @@ export default function PapersPage() {
           </div>
         ) : null}
       </section>
+
+      {/* 语义去重预警弹窗 */}
+      {dedupeToken ? (
+        <div className="modal-backdrop" onClick={handleCancel}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h2>⚠️ 疑似重复论文</h2>
+            <p className="intro">
+              待上传 <strong>{dedupeFilename}</strong> 与库内已有论文高度相似（语义
+              相似度 ≥ 0.92），请选择处理方式：
+            </p>
+            <div className="dup-list">
+              {duplicates.map((d) => (
+                <button
+                  key={d.paper_id}
+                  type="button"
+                  className={`dup-item ${revisionTargetId === d.paper_id ? "active" : ""}`}
+                  onClick={() => handleCompare(d.paper_id)}
+                  disabled={comparing}
+                >
+                  <span>
+                    <strong>{d.filename}</strong>（ID {d.paper_id}）
+                  </span>
+                  <span className="dup-hint">
+                    {comparing && revisionTargetId === d.paper_id
+                      ? "对比中…"
+                      : "点此查看版本差异 →"}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {revisionSummary ? (
+              <div className="revision-box">
+                <h3>📝 修订摘要（由 DeepSeek 生成）</h3>
+                <pre>{revisionSummary}</pre>
+              </div>
+            ) : null}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="danger"
+                onClick={handleCancel}
+                disabled={uploading}
+              >
+                取消上传
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => handleConfirm("keep")}
+                disabled={uploading}
+              >
+                保留（作为独立版本）
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() =>
+                  handleConfirm(
+                    "overwrite",
+                    duplicates.map((d) => d.paper_id),
+                  )
+                }
+                disabled={uploading}
+              >
+                覆盖（删除旧版）
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

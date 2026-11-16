@@ -1,25 +1,57 @@
 # 当前进度快照
 
 更新时间：2026-11-16  
-当前阶段：P0-1（PDF 解析 + 扫描件 OCR）与 P0-2（抗幻觉 RAG 问答）均已跑通真实接口，进入 P0-3 语义去重。
+当前阶段：P0 四项（上传/解析、扫描件 OCR、RAG 问答、删除、语义去重）全部跑通官方用例。
 
-## 2026-11-16 · 充值后完整回归
+## 2026-11-16 · P0-3 语义去重（官方验收用例）
 
-- SiliconFlow 充值完成后重启后端，启动补偿索引自动补齐：
-  Chroma 共 **283** 条向量，按论文分布 {8: 98, 7: 91, 11: 94}。
-- 问答实测（均带页码徽章，`/api/ask` 返回 200）：
-  - 「这篇论文用的优化器是什么」→ Adam 优化器 [第7页]，含 β1/β2/ϵ 设置 [第7页]
-  - 「big model 的 BLEU 分数是多少」→ 英法 41.0 [第8页]，并主动指出第1页另有 41.8 的表述、
-    说明两者口径不同——引用自我校验生效
-- 扫描件 `1706.03762v1_img.pdf` 实测：15 页全部 OCR 成功（`ocr_pages: 15`、`empty_pages: 0`），
-  共 37741 字符，已入库并建索引 94 条向量。
-- 修复：OCR 单页加一次重试、超时放宽到 300s。此前第 2 页因 180s 读超时被判失败，
-  重试后稳定识别（该页约 140s）。
+**验收用例：1706.03762v7.pdf 先入库 → 上传 1706.03762v1.pdf 必须基于语义（非文件名）预警。**
 
-### 环境提醒
+### 后端实现（`app/dedupe.py` + `routers/papers.py`）
 
-- 剩余论文：7（v1）、8（v7）、11（扫描件 OCR 版）。
-- 本地启动不要加 `--reload`，Windows 上偶发卡在 Reloading。
+- 上传解析后，把新论文全文截前 15000 字（BGE-M3 上限 8192 tokens ≈ 20000 字符）
+  作为语义指纹，与库内所有已有论文**一次性 batch embedding**，逐对算余弦相似度。
+- 阈值 0.92 经实测：v1/v7 余弦 0.9489 ✓；不同论文约 0.7 以下。
+- 超过阈值时返回 **HTTP 309**（用 `JSONResponse`，FastAPI 默认 HTTPException 会剥离自定义 headers）：
+  body 里带 `{token, filename, duplicates: [{paper_id, filename, similarity}]}`；
+  headers 里带 `X-Dedupe-Token` 供前端双保险读取。
+- 新增接口：`POST /confirm-keep`（保留为独立条目）、`POST /confirm-overwrite`（覆盖删旧）、
+  `POST /compare`（只读暂存，调用 DeepSeek 生成四字段修订摘要：总体判断 / 修订章节 / 关键数字差异 / 一句话总结）、
+  `POST /cancel`（清理暂存文件）。
+- 待确认队列用进程内 dict + threading.Lock，token 是 uuid hex；compare 用 `peek_pending`
+  只读不消费 token，让前端能先看对比再决定覆盖/保留/取消。
+- 降级保护：相似检测失败（向量化挂了）时直接放行，不阻塞正常上传。
+
+### 前端实现（`frontend/app/papers/page.js` + `globals.css`）
+
+- 上传流程改为两阶段：正常 201 直接入库；309 时解析 body 拿 token+duplicates，
+  弹出遮罩层 Modal。
+- Modal 显示已有论文列表，每条点一下调 `/compare` 显示 DeepSeek 修订摘要
+  （`revision-box` 灰底卡片）。
+- 底部三个主操作："取消上传"（红）、"保留"（灰）、"覆盖"（蓝）。
+
+### 实测结果（接口级 + 浏览器级）
+
+| 步骤 | 预期 | 实际 |
+|---|---|---|
+| v7 上传 | 201 直接入库 | 201 ✅，98 条向量 |
+| v1 上传 | 309 触发预警 | 309 ✅，token+body+header 全对，duplicates.similarity=0.9489 |
+| 浏览器弹窗 | 列出已有论文+对比入口 | ✅ |
+| 点对比 | DeepSeek 修订摘要 | ✅ 输出四字段结构化修订 |
+| confirm-keep | 新条目入库 | ✅ 列表变 2 条 |
+| confirm-overwrite | 删旧→新条目 | ✅ 最终只剩 1 条 |
+| cancel | 清理暂存文件 | ✅ |
+
+### 踩坑记录
+
+1. **FastAPI HTTPException 剥离自定义 headers**：改成直接 `return JSONResponse(...)`。
+2. **全文太长 embedding 接口 400**：BGE-M3 单次上限 8192 tokens ≈ 20000 字符，去重指纹截前 15000 字已足够区分版本（v1/v7 相似度 0.95 vs 不同论文 0.7）。
+3. **compare 后 token 失效**：先 dequeue 又 enqueue 用了新 token。修复：compare 用 peek 只读不消费。
+4. **Windows --reload 清空内存 pending 队列**：后端稳定运行必须不带 `--reload`。
+
+### 下一步
+
+P1 开始：双语联动阅读、引用图谱。
 
 ## 2026-11-16 · 论文删除与向量库同步清理
 

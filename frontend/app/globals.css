@@ -380,6 +380,82 @@ button.danger:hover {
   background: #fdf1ef;
 }
 
+/* 语义去重：遮罩层 */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fade-in 0.15s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 28px 32px;
+  max-width: 560px;
+  width: 92%;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal-card h2 { margin: 0 0 6px; font-size: 20px; }
+
+.dup-list { margin: 16px 0; display: flex; flex-direction: column; gap: 8px; }
+
+.dup-item {
+  text-align: left;
+  padding: 10px 14px;
+  border: 1.5px solid #e0e4ea;
+  background: #fafbfd;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.dup-item:hover { border-color: #4a7eff; background: #f0f4ff; }
+.dup-item.active { border-color: #4a7eff; background: #e8efff; }
+.dup-item:disabled { opacity: 0.7; cursor: wait; }
+
+.dup-hint { font-size: 12px; color: #8892a4; }
+
+.revision-box {
+  background: #f6f8fb;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 14px 0 18px;
+}
+
+.revision-box h3 { margin: 0 0 8px; font-size: 15px; }
+.revision-box pre {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* 论文库页的"进入智能问答"入口 */.ask-entry {
   display: inline-block;
   margin-top: 16px;
