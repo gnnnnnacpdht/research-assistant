@@ -84,6 +84,33 @@ export default function PapersPage() {
     }
   }
 
+  // 删除论文：二次确认后调用 DELETE，成功则刷新列表。
+  async function handleDelete(paper) {
+    if (
+      !window.confirm(
+        `确定删除《${paper.filename}》（ID ${paper.id}）吗？\n该论文的分页文本与向量索引会一并删除，不可恢复。`,
+      )
+    ) {
+      return;
+    }
+
+    setMessage("");
+    setWarning("");
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/papers/${paper.id}`, {
+        method: "DELETE",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail ?? `删除失败（HTTP ${response.status}）`);
+      }
+      setMessage(`已删除：${data.filename}（ID ${data.deleted}）`);
+      await loadPapers();
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
   return (
     <main className="container">
       <section className="page-head">
@@ -137,6 +164,7 @@ export default function PapersPage() {
                   <th>文件名</th>
                   <th>页数</th>
                   <th>上传时间</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -146,6 +174,15 @@ export default function PapersPage() {
                     <td>{paper.filename}</td>
                     <td>{paper.page_count}</td>
                     <td>{formatTime(paper.uploaded_at)}</td>
+                    <td>
+                      <button
+                        className="danger"
+                        type="button"
+                        onClick={() => handleDelete(paper)}
+                      >
+                        删除
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

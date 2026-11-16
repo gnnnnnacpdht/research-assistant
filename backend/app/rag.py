@@ -102,6 +102,16 @@ def index_paper(paper_id: int) -> int:
     return len(chunks)
 
 
+def delete_paper_vectors(paper_id: int) -> None:
+    """删除某篇论文在向量库中的全部片段。
+
+    必须与 SQLite 的删除同步执行，否则已删论文仍会被检索到并出现在引用里。
+    """
+    collection = get_collection()
+    with _index_lock:
+        collection.delete(where={"paper_id": paper_id})
+
+
 def pending_paper_ids() -> list[int]:
     """返回尚未建立索引的论文 id，供启动时补偿索引使用。"""
     collection = get_collection()

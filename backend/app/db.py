@@ -127,3 +127,19 @@ def get_pages(paper_id: int) -> list[tuple[int, str]]:
             (paper_id,),
         ).fetchall()
     return [(int(row["page_number"]), str(row["text"])) for row in rows]
+
+
+def delete_paper(paper_id: int) -> dict | None:
+    """删除论文及其全部分页记录，返回被删论文信息（含文件路径）供调用方清理文件。
+
+    论文不存在时返回 None，让接口层能区分 404 与成功。
+    """
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT id, filename, stored_path FROM papers WHERE id = ?", (paper_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        connection.execute("DELETE FROM pages WHERE paper_id = ?", (paper_id,))
+        connection.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+    return dict(row)

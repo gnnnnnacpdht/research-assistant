@@ -367,8 +367,20 @@ tbody tr:last-child td {
   border-top: 1px solid var(--border);
 }
 
-/* 论文库页的"进入智能问答"入口 */
-.ask-entry {
+/* 删除按钮：红色描边，与主操作按钮区分开，降低误点概率 */
+button.danger {
+  padding: 6px 14px;
+  border-color: #e0b4ae;
+  color: #c0392b;
+  font-size: 13px;
+}
+
+button.danger:hover {
+  border-color: #c0392b;
+  background: #fdf1ef;
+}
+
+/* 论文库页的"进入智能问答"入口 */.ask-entry {
   display: inline-block;
   margin-top: 16px;
   padding: 10px 18px;

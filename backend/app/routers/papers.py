@@ -80,3 +80,24 @@ def reindex_paper(paper_id: int) -> dict:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"paper_id": paper_id, "chunks": chunk_count}
+
+
+@router.delete("/{paper_id}")
+def delete_paper(paper_id: int) -> dict:
+    """删除论文：向量库 → SQLite → 原文件，三处同步清理。
+
+    先删向量：万一向量库删除失败，SQLite 记录还在，用户可以重试；
+    反过来先删记录会留下"删不掉的幽灵片段"。
+    """
+    try:
+        rag.delete_paper_vectors(paper_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"向量库清理失败：{exc}") from exc
+
+    paper = db.delete_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+
+    # 原文件只是留档，删不掉不影响数据一致性，忽略异常即可。
+    Path(paper["stored_path"]).unlink(missing_ok=True)
+    return {"deleted": paper_id, "filename": paper["filename"]}
