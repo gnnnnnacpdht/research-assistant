@@ -1192,7 +1192,10 @@ button.danger:hover {
 }
 
 @media (max-width: 1100px) {
-  .read-body { grid-template-columns: 1fr; }
+  /* 窄屏单列也要允许网格项收缩，否则 PDF 的固定像素宽度会撑破整页。 */
+  .read-body { grid-template-columns: minmax(0, 1fr); }
+  .pdf-pane, .side-pane { min-width: 0; }
+  .pdf-scroll { max-width: 100%; overflow-x: auto; }
 }
 
 .pdf-pane {
