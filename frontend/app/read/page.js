@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import * as pdfjsLib from "pdfjs-dist";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 
 // worker 文件由构建时复制到 public/，避免从 CDN 拉取（内网/演示环境更稳）。
 // 带版本查询串：文件内容不变时浏览器会 304 复用旧响应头（曾把 .mjs 缓存成 text/plain），
@@ -122,6 +123,8 @@ function ReadPageInner() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [status, setStatus] = useState("正在加载文档 0%…");
   const [error, setError] = useState("");
+  const [translationError, setTranslationError] = useState("");
+  const [translationRetry, setTranslationRetry] = useState(0);
   const firstPageReady = visiblePage > 0;
 
   // 目录面板开合、左右同步滚动开关
@@ -132,11 +135,16 @@ function ReadPageInner() {
 
   const [tab, setTab] = useState("translate"); // translate | references | structure
   const [references, setReferences] = useState({ entries: [], first_pages: {} });
+  const [referencesLoading, setReferencesLoading] = useState(false);
+  const [referencesError, setReferencesError] = useState("");
+  const [referencesRetry, setReferencesRetry] = useState(0);
   // 低含金量（应付式）引用默认折叠，跳转命中时自动展开
   const [showLowRefs, setShowLowRefs] = useState(false);
   // 结构化视图：一次取全部条目，切标签页不再重复请求
   const [structure, setStructure] = useState({ counts: {}, items: [] });
+  const [structureLoading, setStructureLoading] = useState(false);
   const [structureError, setStructureError] = useState("");
+  const [structureRetry, setStructureRetry] = useState(0);
   const [activeCitation, setActiveCitation] = useState(null);
   const [selectionResult, setSelectionResult] = useState(null); // {text, translation}
   const [selectionBusy, setSelectionBusy] = useState(false);
@@ -339,6 +347,7 @@ function ReadPageInner() {
     setPageText("");
     setTextReadyPage(0);
     setTranslation("");
+    setTranslationError("");
     setTranslating(false);
     setSelectionResult(null);
     setFloatButton(null);
@@ -356,14 +365,14 @@ function ReadPageInner() {
         setTextReadyPage(pageNum);
         setPageCount(data.page_count || 0);
       } catch (err) {
-        if (!cancelled) setTranslation(`页面文本加载失败：${err.message}`);
+        if (!cancelled) setTranslationError(`第 ${pageNum} 页文本加载失败：${err.message}`);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [paperId, pageNum]);
+  }, [paperId, pageNum, translationRetry]);
 
   // ===== 3b. 当前页真正可见后才翻译；同页译文只请求一次 =====
   useEffect(() => {
@@ -389,7 +398,7 @@ function ReadPageInner() {
         translateCacheRef.current.set(pageNum, data.translation);
         if (!cancelled) setTranslation(data.translation);
       } catch (err) {
-        if (!cancelled) setTranslation(`翻译失败：${err.message}`);
+        if (!cancelled) setTranslationError(`第 ${pageNum} 页翻译失败：${err.message}`);
       } finally {
         if (!cancelled) setTranslating(false);
       }
@@ -398,24 +407,32 @@ function ReadPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [paperId, pageNum, pageText, textReadyPage, visiblePage]);
+  }, [paperId, pageNum, pageText, textReadyPage, visiblePage, translationRetry]);
 
   // ===== 4. 参考文献延迟到用户打开标签页时再请求，不占首屏带宽 =====
   useEffect(() => {
     if (!paperId || tab !== "references" || referencesLoadedRef.current === paperId) return;
     let cancelled = false;
+    setReferencesLoading(true);
+    setReferencesError("");
     fetch(`${apiBaseUrl}/api/papers/${paperId}/references`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail ?? `加载失败（HTTP ${response.status}）`);
         if (cancelled) return;
         setReferences({ entries: data.entries || [], first_pages: data.first_pages || {} });
         referencesLoadedRef.current = paperId;
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (!cancelled) setReferencesError(`参考文献加载失败：${err.message}`);
+      })
+      .finally(() => {
+        if (!cancelled) setReferencesLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [paperId, tab]);
+  }, [paperId, tab, referencesRetry]);
 
   // 参考文献可能是点击正文引用后才加载，数据到达后再完成定位。
   useEffect(() => {
@@ -438,6 +455,7 @@ function ReadPageInner() {
   useEffect(() => {
     if (!paperId || !firstPageReady) return;
     let cancelled = false;
+    setStructureLoading(true);
     fetch(`${apiBaseUrl}/api/papers/${paperId}/structure`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
@@ -449,12 +467,15 @@ function ReadPageInner() {
         setStructureError("");
       })
       .catch((error) => {
-        if (!cancelled) setStructureError(error.message);
+        if (!cancelled) setStructureError(`结构化内容加载失败：${error.message}`);
+      })
+      .finally(() => {
+        if (!cancelled) setStructureLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [paperId, firstPageReady]);
+  }, [paperId, firstPageReady, structureRetry]);
 
   // ===== 4c. 整篇翻译：按页顺序请求，命中缓存直接跳过 =====
   // 只逐页串行调用（并发会打爆 LLM 限流），每完成一页刷新一次进度。
@@ -569,7 +590,7 @@ function ReadPageInner() {
       setSelectionResult({ text, translation: data.translation, cached: data.cached });
       setTab("translate");
     } catch (err) {
-      setSelectionResult({ text, translation: `翻译失败：${err.message}` });
+      setTranslationError(`划词翻译失败：${err.message}`);
     } finally {
       setSelectionBusy(false);
     }
@@ -656,13 +677,29 @@ function ReadPageInner() {
     if (page) setPageNum(Number(page));
   }
 
+  function retryReadFailures() {
+    if (error) {
+      window.location.reload();
+      return;
+    }
+    setTranslationError("");
+    setReferencesError("");
+    setStructureError("");
+    setTranslationRetry((value) => value + 1);
+    setReferencesRetry((value) => value + 1);
+    setStructureRetry((value) => value + 1);
+  }
+
   if (!paperId) {
     return (
       <main className="container">
-        <p className="message error">{error || "缺少 paper_id 参数"}</p>
-        <a className="secondary" href="/papers">
-          ← 返回论文库
-        </a>
+        <ErrorBanner message={error || "缺少 paper_id 参数，请从论文库进入"} onClose={() => setError("")} />
+        <EmptyState
+          title="还没有选择要阅读的论文"
+          description="从论文库点击“阅读”，即可打开原版 PDF 与中文译文。"
+          actionLabel="前往论文库"
+          actionHref="/papers"
+        />
       </main>
     );
   }
@@ -722,7 +759,16 @@ function ReadPageInner() {
         </div>
       </header>
 
-      {error ? <p className="message error">{error}</p> : null}
+      <ErrorBanner
+        message={error || translationError || referencesError || structureError}
+        onRetry={retryReadFailures}
+        onClose={() => {
+          setError("");
+          setTranslationError("");
+          setReferencesError("");
+          setStructureError("");
+        }}
+      />
 
       {bulk?.running ? (
         <div className="bulk-bar">
@@ -863,17 +909,31 @@ function ReadPageInner() {
 
               <h3 className="pane-title">第 {pageNum} 页译文</h3>
               {translating ? (
-                <p className="message">正在翻译…</p>
-              ) : (
+                <LoadingBlock compact label={`正在翻译第 ${pageNum} 页…`} lines={5} />
+              ) : translation ? (
                 <div className="translation-text">{translation}</div>
-              )}
+              ) : !translationError ? (
+                <EmptyState
+                  title="当前页暂无译文"
+                  description="页面文本加载后会自动翻译；也可以重新加载当前页。"
+                  actionLabel="重新加载译文"
+                  onAction={() => setTranslationRetry((value) => value + 1)}
+                />
+              ) : null}
             </div>
           ) : tab === "references" ? (
             <div className="pane-content">
               <h3 className="pane-title">参考文献</h3>
-              {references.entries.length === 0 ? (
-                <p className="message">未解析到参考文献条目。</p>
-              ) : (
+              {referencesLoading ? (
+                <LoadingBlock compact label="正在解析参考文献…" lines={4} />
+              ) : references.entries.length === 0 && !referencesError ? (
+                <EmptyState
+                  title="未解析到参考文献"
+                  description="可尝试重新加载，或回到论文库选择其他论文。"
+                  actionLabel="重新加载"
+                  onAction={() => setReferencesRetry((value) => value + 1)}
+                />
+              ) : references.entries.length > 0 ? (
                 <>
                   <ol className="ref-list">{qualityRefs.map((entry) => renderRefEntry(entry))}</ol>
                   {lowQualityRefs.length > 0 ? (
@@ -894,16 +954,19 @@ function ReadPageInner() {
                     </div>
                   ) : null}
                 </>
-              )}
+              ) : null}
             </div>
           ) : (
             <div className="pane-content">
               <h3 className="pane-title">结构化视图</h3>
-              {structureError ? <p className="message error">{structureError}</p> : null}
-              {!structureError && structure.items.length === 0 ? (
-                <p className="message">
-                  该论文尚未完成结构化抽取。新上传的论文会在后台自动抽取，稍后刷新本页即可。
-                </p>
+              {structureLoading ? <LoadingBlock compact label="正在加载标题、表格与公式…" lines={4} /> : null}
+              {!structureLoading && !structureError && structure.items.length === 0 ? (
+                <EmptyState
+                  title="结构化内容尚未就绪"
+                  description="新上传论文会在后台自动抽取标题、表格、公式和参考文献。"
+                  actionLabel="重新检查"
+                  onAction={() => setStructureRetry((value) => value + 1)}
+                />
               ) : null}
 
               {metaTitle ? (
@@ -1006,7 +1069,7 @@ function ReadPageInner() {
 
 export default function ReadPage() {
   return (
-    <Suspense fallback={<main className="container">加载中…</main>}>
+    <Suspense fallback={<main className="container"><LoadingBlock label="正在打开双语阅读器…" /></main>}>
       <ReadPageInner />
     </Suspense>
   );

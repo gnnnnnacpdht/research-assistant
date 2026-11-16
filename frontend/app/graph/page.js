@@ -8,6 +8,7 @@ import { TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 
 // 按需注册，避免把整个 echarts 打进来（图谱只需要 graph + tooltip + canvas 渲染）
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
@@ -199,6 +200,7 @@ function GraphInner() {
 
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [retryToken, setRetryToken] = useState(0);
   const [selected, setSelected] = useState(null);
   // 自动综述弹层
   const [survey, setSurvey] = useState(null);
@@ -210,6 +212,7 @@ function GraphInner() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setError("");
       try {
         const response = await fetch(`${apiBaseUrl}/api/papers/${paperId}/citations`, {
           cache: "no-store",
@@ -224,7 +227,7 @@ function GraphInner() {
     return () => {
       cancelled = true;
     };
-  }, [paperId]);
+  }, [paperId, retryToken]);
 
   const chartData = useMemo(() => (data ? buildChartData(data) : null), [data]);
 
@@ -376,21 +379,22 @@ function GraphInner() {
     setCopied(false);
   }
 
-  if (error) {
+  if (error || !data) {
     return (
       <main className="container">
-        <p className="message error">{error}</p>
-        <a className="secondary" href="/papers">
-          ← 返回论文库
-        </a>
-      </main>
-    );
-  }
-
-  if (!data) {
-    return (
-      <main className="container">
-        <p className="message">正在构建引用图谱…</p>
+        <section className="page-head">
+          <p className="eyebrow">CITATION NETWORK</p>
+          <h1>引用图谱</h1>
+          <p className="intro">通过引用网络发现基石文献，并生成有依据的领域综述。</p>
+        </section>
+        <ErrorBanner
+          message={error ? `引用图谱加载失败：${error}` : ""}
+          onRetry={() => setRetryToken((value) => value + 1)}
+          onClose={() => setError("")}
+        />
+        {!error ? (
+          <section className="card"><LoadingBlock label="正在解析参考文献并构建引用网络…" lines={5} /></section>
+        ) : null}
       </main>
     );
   }
@@ -400,11 +404,12 @@ function GraphInner() {
 
   return (
     <main className="graph-page">
-      <header className="read-head">
-        <a className="secondary" href="/papers">
-          ← 论文库
-        </a>
-        <span className="read-title">引用图谱 · {data.filename}</span>
+      <section className="page-head graph-page-head">
+        <div>
+          <p className="eyebrow">CITATION NETWORK</p>
+          <h1>引用图谱</h1>
+          <p className="intro">{data.filename} · 可视化引用网络、挖掘基石文献并生成自动综述。</p>
+        </div>
         <button
           className="primary"
           type="button"
@@ -413,7 +418,7 @@ function GraphInner() {
         >
           {surveyLoading ? "生成中…" : "生成综述"}
         </button>
-      </header>
+      </section>
 
       {/* 顶部统计条 */}
       <div className="graph-stats">
@@ -436,10 +441,12 @@ function GraphInner() {
       <div className="graph-canvas">
         {empty ? (
           <div className="graph-empty">
-            <p>该论文未解析到参考文献</p>
-            <p className="graph-empty-tip">
-              如果 PDF 末尾的 References 是图片或使用了特殊排版，解析可能为空；可回到论文库重新上传，或在阅读页「结构化视图」确认参考文献条目。
-            </p>
+            <EmptyState
+              title="该论文未解析到参考文献"
+              description="如果 References 是图片或特殊排版，解析可能为空；可在阅读页结构化视图核对，或返回论文库选择其他论文。"
+              actionLabel="返回论文库"
+              actionHref="/papers"
+            />
           </div>
         ) : (
           <>
@@ -565,8 +572,12 @@ function GraphInner() {
               </div>
             </div>
 
-            {surveyLoading ? <p className="message">正在生成综述，约需 10-30 秒…</p> : null}
-            {surveyError ? <p className="message error">{surveyError}</p> : null}
+            {surveyLoading ? <LoadingBlock label="正在依据论文与引用网络生成综述…" lines={4} /> : null}
+            <ErrorBanner
+              message={surveyError ? `综述生成失败：${surveyError}` : ""}
+              onRetry={() => generateSurvey(false)}
+              onClose={() => setSurveyError("")}
+            />
 
             {survey && !surveyLoading ? (
               <>
@@ -618,7 +629,7 @@ function GraphInner() {
 
 export default function GraphPage() {
   return (
-    <Suspense fallback={<main className="container">加载中…</main>}>
+    <Suspense fallback={<main className="container"><LoadingBlock label="正在打开引用图谱…" /></main>}>
       <GraphInner />
     </Suspense>
   );

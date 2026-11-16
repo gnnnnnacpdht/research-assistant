@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 
 // Mermaid 体积较大（约 1MB），不值得打进主包；首次点开论文框架时从 CDN 懒加载。
 // 用 UMD 脚本注入而不是 npm 依赖：静态导出（output: export）下打包更稳。
@@ -112,7 +113,14 @@ export function FrameworkPanel() {
         <p className="hint">
           Related Work 的引用只会来自本地论文库（无库内文献时留空），不会编造参考文献。
         </p>
-        {error ? <p className="message error">{error}</p> : null}
+        <ErrorBanner message={error} onRetry={idea.trim() ? (event) => generate(event) : undefined} onClose={() => setError("")} />
+        {loading ? <LoadingBlock compact label="正在生成框架并校验库内引用…" lines={3} /> : null}
+        {!loading && !result ? (
+          <EmptyState
+            title="把研究想法展开为论文框架"
+            description="生成六节写作要点与架构图，Related Work 只引用本地库内文献。"
+          />
+        ) : null}
       </section>
 
       {result ? (
@@ -270,7 +278,11 @@ export function Zh2EnPanel() {
       <p className="hint">
         输出遵循学术书面语与被动语态，保留引用标记与术语；相同文本会命中缓存避免重复计费。
       </p>
-      {error ? <p className="message error">{error}</p> : null}
+      <ErrorBanner message={error} onRetry={text.trim() ? (event) => translate(event) : undefined} onClose={() => setError("")} />
+      {loading ? <LoadingBlock compact label="正在按学术规范翻译…" lines={2} /> : null}
+      {!loading && !translation ? (
+        <EmptyState title="等待翻译" description="输入中文摘要或段落后，即可获得学术英文译文。" />
+      ) : null}
       {translation ? (
         <div className="writing-output">
           <div className="list-head">

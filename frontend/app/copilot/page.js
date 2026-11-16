@@ -15,6 +15,7 @@ import {
 import { Bar, Line } from "react-chartjs-2";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 import { FrameworkPanel, Zh2EnPanel } from "./writing-tabs";
 
 ChartJS.register(
@@ -84,6 +85,7 @@ export default function CopilotPage() {
   const [chartType, setChartType] = useState("bar");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   // 选轴：第一个数值列当 Y，第一个非数值列当 X
@@ -157,6 +159,7 @@ export default function CopilotPage() {
 
     setLoading(true);
     setMessage("");
+    setError("");
     setAnalysis(null);
     setRawRows([]);
     setCopied(false);
@@ -178,7 +181,7 @@ export default function CopilotPage() {
       setAnalysis(data);
       setMessage(`已解析 ${data.row_count} 行 · ${data.columns.length} 列`);
     } catch (error) {
-      setMessage(error.message);
+      setError(`CSV 分析失败：${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -209,6 +212,12 @@ export default function CopilotPage() {
           ← 返回首页
         </a>
       </section>
+
+      <ErrorBanner
+        message={error}
+        onRetry={() => fileRef.current?.form?.requestSubmit()}
+        onClose={() => setError("")}
+      />
 
       <div className="tab-row">
         <button
@@ -248,7 +257,16 @@ export default function CopilotPage() {
             {loading ? "分析中…" : "上传并生成图注"}
           </button>
         </form>
-        {message ? <p className="message">{message}</p> : null}
+        {message ? <p className="message success">{message}</p> : null}
+        {loading ? <LoadingBlock label="正在分析列类型并生成学术图注…" lines={3} /> : null}
+        {!loading && !analysis ? (
+          <EmptyState
+            title="上传 CSV，生成可复用学术图表"
+            description="系统自动识别数值列与类别列，支持柱状图、折线图和中英双语图注。"
+            actionLabel="选择 CSV 文件"
+            onAction={() => fileRef.current?.click()}
+          />
+        ) : null}
       </section>
 
       {analysis ? (

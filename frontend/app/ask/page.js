@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 
 // 支持单篇 [第7页] 与跨论文 [论文2 第7页] 两种引用标记。
 const PAGE_MARK = /(\[论文\d+\s*第\d+页\]|\[第\d+页\])/g;
@@ -103,13 +104,19 @@ export default function AskPage() {
   // 论文范围：空串表示全库检索，否则只在该论文内检索（避免大文档淹没小论文）。
   const [papers, setPapers] = useState([]);
   const [paperId, setPaperId] = useState("");
+  const [listError, setListError] = useState("");
+  const [listRetry, setListRetry] = useState(0);
 
   useEffect(() => {
+    setListError("");
     fetch(`${apiBaseUrl}/api/papers`)
-      .then((response) => response.json())
-      .then((data) => setPapers(Array.isArray(data) ? data : []))
-      .catch(() => {});
-  }, []);
+      .then(async (response) => {
+        const data = await response.json().catch(() => []);
+        if (!response.ok) throw new Error("论文列表加载失败，请稍后重试");
+        setPapers(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setListError("论文列表加载失败，请检查网络连接后重试"));
+  }, [listRetry]);
   const [error, setError] = useState("");
   // 同时记录论文编号与页码，避免不同论文的同页片段在弹窗里混淆。
   const [activeCite, setActiveCite] = useState(null);
@@ -177,6 +184,17 @@ export default function AskPage() {
         </a>
       </section>
 
+      <ErrorBanner
+        message={listError}
+        onRetry={() => setListRetry((value) => value + 1)}
+        onClose={() => setListError("")}
+      />
+      <ErrorBanner
+        message={error ? `问答未完成：${error}` : ""}
+        onRetry={question.trim() ? () => handleAsk() : undefined}
+        onClose={() => setError("")}
+      />
+
       <section className="card">
         <h2>提问</h2>
         <form className="ask-form" onSubmit={handleAsk}>
@@ -216,8 +234,24 @@ export default function AskPage() {
             ))}
           </div>
         </form>
-        {error ? <p className="message error">{error}</p> : null}
       </section>
+
+      {asking ? (
+        <section className="card">
+          <LoadingBlock label="Agent 正在检索原文、重排并核验引用…" lines={4} />
+        </section>
+      ) : null}
+
+      {!asking && !answer ? (
+        <section className="card">
+          <EmptyState
+            title="从一个有出处的问题开始"
+            description="答案仅依据库内论文生成，并附可点击的页码引用和原文片段。"
+            actionLabel="试试示例问题"
+            onAction={() => setQuestion(EXAMPLES[0])}
+          />
+        </section>
+      ) : null}
 
       {answer ? (
         <section className="card">

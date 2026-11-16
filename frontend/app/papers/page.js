@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { EmptyState, ErrorBanner, LoadingBlock } from "../Feedback";
 
 // 从文件名里取版本号，如 1706.03762v7.pdf → 7；取不到返回 null
 function parseVersion(name) {
@@ -29,6 +30,9 @@ export default function PapersPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [warning, setWarning] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [retryAction, setRetryAction] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
   // 语义去重预警弹窗状态
   const [dedupeToken, setDedupeToken] = useState("");
   const [duplicates, setDuplicates] = useState([]);
@@ -37,6 +41,7 @@ export default function PapersPage() {
   const [revisionSummary, setRevisionSummary] = useState("");
   const [revisionTargetId, setRevisionTargetId] = useState(null);
   const fileInputRef = useRef(null);
+  const arxivInputRef = useRef(null);
   // arXiv 导入与推荐
   const [arxivQuery, setArxivQuery] = useState("");
   const [importing, setImporting] = useState(false);
@@ -45,6 +50,7 @@ export default function PapersPage() {
   const [recommendLoading, setRecommendLoading] = useState(false);
 
   const loadPapers = useCallback(async () => {
+    setLoading(true);
     try {
       const response = await fetch(`${apiBaseUrl}/api/papers`, {
         cache: "no-store",
@@ -87,6 +93,16 @@ export default function PapersPage() {
     loadPapers();
     loadRecommendations();
   }, [loadPapers, loadRecommendations]);
+
+  function showError(message, retry) {
+    setActionError(message);
+    setRetryAction(() => retry);
+  }
+
+  function clearActionError() {
+    setActionError("");
+    setRetryAction(null);
+  }
 
   // 上传/arXiv 导入共用：进入去重弹窗
   function openDedupe(data, fallbackName) {
@@ -146,7 +162,7 @@ export default function PapersPage() {
       }
       await loadPapers();
     } catch (error) {
-      setMessage(error.message);
+      showError(`PDF 上传失败：${error.message}`, () => fileInputRef.current?.form?.requestSubmit());
     } finally {
       setUploading(false);
     }
@@ -203,7 +219,7 @@ export default function PapersPage() {
       await loadPapers();
       await loadRecommendations();
     } catch (error) {
-      setArxivMessage(error.message);
+      showError(`arXiv 导入失败：${error.message}`, () => importFromArxiv(text));
     } finally {
       setImporting(false);
     }
@@ -247,7 +263,7 @@ export default function PapersPage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       await loadPapers();
     } catch (error) {
-      setMessage(error.message);
+      showError(`去重确认失败：${error.message}`, () => handleConfirm(action, replaceIds));
     } finally {
       setUploading(false);
     }
@@ -269,7 +285,7 @@ export default function PapersPage() {
       setRevisionSummary(data.summary);
       // compare 不消费 token，继续持有
     } catch (error) {
-      setMessage("对比失败：" + error.message);
+      showError(`版本对比失败：${error.message}`, () => handleCompare(targetId));
     } finally {
       setComparing(false);
     }
@@ -298,16 +314,9 @@ export default function PapersPage() {
   }
 
   async function handleDelete(paper) {
-    if (
-      !window.confirm(
-        `确定删除《${paper.filename}》（ID ${paper.id}）吗？\n该论文的分页文本与向量索引会一并删除，不可恢复。`,
-      )
-    ) {
-      return;
-    }
-
     setMessage("");
     setWarning("");
+    clearActionError();
     try {
       const response = await fetch(`${apiBaseUrl}/api/papers/${paper.id}`, {
         method: "DELETE",
@@ -317,9 +326,10 @@ export default function PapersPage() {
         throw new Error(data.detail ?? `删除失败（HTTP ${response.status}）`);
       }
       setMessage(`已删除：${data.filename}（ID ${data.deleted}）`);
+      setPendingDelete(null);
       await loadPapers();
     } catch (error) {
-      setMessage(error.message);
+      showError(`删除失败：${error.message}`, () => handleDelete(paper));
     }
   }
 
@@ -342,6 +352,17 @@ export default function PapersPage() {
         </div>
       </section>
 
+      <ErrorBanner
+        message={listError}
+        onRetry={loadPapers}
+        onClose={() => setListError("")}
+      />
+      <ErrorBanner
+        message={actionError}
+        onRetry={retryAction || undefined}
+        onClose={clearActionError}
+      />
+
       <div className="papers-layout">
         <div className="papers-left">
       <section className="card">
@@ -352,14 +373,15 @@ export default function PapersPage() {
             {uploading ? "解析中…" : "上传并解析"}
           </button>
         </form>
-        {message ? <p className="message">{message}</p> : null}
-        {warning ? <p className="message error">{warning}</p> : null}
+        {message ? <p className="message success">{message}</p> : null}
+        {warning ? <p className="message warning">{warning}</p> : null}
       </section>
 
       <section className="card">
         <h2>从 arXiv 导入</h2>
         <form className="upload-form" onSubmit={handleArxivImport}>
           <input
+            ref={arxivInputRef}
             type="text"
             value={arxivQuery}
             onChange={(event) => setArxivQuery(event.target.value)}
@@ -373,7 +395,7 @@ export default function PapersPage() {
         <p className="hint">
           系统调用 arXiv 官方接口取相关度最高的一篇，自动下载 PDF 并走解析、去重、索引流程。
         </p>
-        {arxivMessage ? <p className="message">{arxivMessage}</p> : null}
+        {arxivMessage ? <p className="message success">{arxivMessage}</p> : null}
       </section>
         </div>
 
@@ -394,7 +416,8 @@ export default function PapersPage() {
           基于库内论文的关键词共现（
           {recommend.keywords.length > 0 ? recommend.keywords.join("、") : "暂无"}）检索 arXiv。
         </p>
-        {recommend.message ? <p className="message">{recommend.message}</p> : null}
+        {recommend.message ? <p className="message warning">{recommend.message}</p> : null}
+        {recommendLoading ? <LoadingBlock compact label="正在检索相关论文…" lines={2} /> : null}
         {recommend.items.length > 0 ? (
           <div className="recommend-grid">
             {recommend.items.map((item) => (
@@ -426,6 +449,13 @@ export default function PapersPage() {
               </article>
             ))}
           </div>
+        ) : !recommendLoading ? (
+          <EmptyState
+            title="暂无推荐论文"
+            description="先上传或导入论文，系统会按库内关键词推荐相关工作。"
+            actionLabel="输入 arXiv ID"
+            onAction={() => arxivInputRef.current?.focus()}
+          />
         ) : null}
       </section>
 
@@ -437,10 +467,14 @@ export default function PapersPage() {
           </button>
         </div>
 
-        {loading ? <p className="message">加载中…</p> : null}
-        {listError ? <p className="message error">{listError}</p> : null}
+        {loading ? <LoadingBlock label="正在加载论文列表…" lines={3} /> : null}
         {!loading && !listError && papers.length === 0 ? (
-          <p className="message">还没有论文，先上传一个 PDF 试试。</p>
+          <EmptyState
+            title="论文库还是空的"
+            description="上传第一篇 PDF 后，即可使用可信问答、双语阅读和引用图谱。"
+            actionLabel="选择 PDF 上传"
+            onAction={() => fileInputRef.current?.click()}
+          />
         ) : null}
 
         {papers.length > 0 ? (
@@ -482,7 +516,7 @@ export default function PapersPage() {
                       <button
                         className="danger"
                         type="button"
-                        onClick={() => handleDelete(paper)}
+                        onClick={() => setPendingDelete(paper)}
                       >
                         删除
                       </button>
@@ -496,6 +530,25 @@ export default function PapersPage() {
       </section>
         </div>
       </div>
+
+      {pendingDelete ? (
+        <div className="modal-backdrop" onClick={() => setPendingDelete(null)}>
+          <div className="modal-card delete-modal" onClick={(event) => event.stopPropagation()}>
+            <h2>确认删除论文</h2>
+            <p className="intro">
+              将删除《{pendingDelete.filename}》（ID {pendingDelete.id}）及其分页文本与向量索引，此操作不可恢复。
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={() => setPendingDelete(null)}>
+                取消
+              </button>
+              <button type="button" className="danger" onClick={() => handleDelete(pendingDelete)}>
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 语义去重预警弹窗 */}
       {dedupeToken ? (
