@@ -24,37 +24,48 @@ OCR_PROMPT = (
 )
 
 
-def ocr_png(png: bytes) -> str:
-    """把一张页面图片交给多模态模型识别，返回纯文本。"""
+def ocr_png(png: bytes, attempts: int = 2) -> str:
+    """把一张页面图片交给多模态模型识别，返回纯文本。
+
+    单页识别可能要一两分钟，服务端偶发超时或返回空文本；
+    这里重试一次，避免整页内容因为一次抖动而丢失。
+    """
     api_key = config.require_api_key("multimodal")
     image_url = "data:image/png;base64," + base64.b64encode(png).decode()
 
-    with httpx.Client(timeout=180.0) as client:
-        response = client.post(
-            f"{config.MULTIMODAL_BASE_URL}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": config.VISION_MODEL,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": image_url}},
-                            {"type": "text", "text": OCR_PROMPT},
-                        ],
-                    }
-                ],
-                "temperature": 0.0,
-            },
-        )
+    last_error = "模型返回空文本"
+    for _ in range(attempts):
+        with httpx.Client(timeout=300.0) as client:
+            response = client.post(
+                f"{config.MULTIMODAL_BASE_URL}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": config.VISION_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": image_url}},
+                                {"type": "text", "text": OCR_PROMPT},
+                            ],
+                        }
+                    ],
+                    "temperature": 0.0,
+                },
+            )
 
-    if response.status_code != 200:
-        # 余额不足、模型未开通都会走到这里，原文透传便于定位。
-        raise RuntimeError(
-            f"OCR 调用失败（HTTP {response.status_code}）：{response.text[:300]}"
-        )
+        if response.status_code != 200:
+            # 余额不足、模型未开通都会走到这里，原文透传便于定位。
+            raise RuntimeError(
+                f"OCR 调用失败（HTTP {response.status_code}）：{response.text[:300]}"
+            )
 
-    return response.json()["choices"][0]["message"]["content"].strip()
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        if text:
+            return text
+        last_error = "模型返回空文本"
+
+    raise RuntimeError(last_error)
 
 
 def recognize_pages(
