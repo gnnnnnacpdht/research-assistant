@@ -9,7 +9,7 @@ import { apiBaseUrl } from "../../lib/apiBase";
 // worker 文件由构建时复制到 public/，避免从 CDN 拉取（内网/演示环境更稳）。
 // 带版本查询串：文件内容不变时浏览器会 304 复用旧响应头（曾把 .mjs 缓存成 text/plain），
 // 换一个 URL 可强制重新拉取，避免模块 MIME 校验失败的假死。
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs?v=4.10.38";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs?v=4.10.38-reader2";
 
 const CITATION_RE = /\[(\d{1,3})\]/g;
 
@@ -97,11 +97,12 @@ function ReadPageInner() {
   const searchParams = useSearchParams();
   const paperId = Number(searchParams.get("paper_id") || 0);
 
-  const canvasRef = useRef(null);
-  const textLayerRef = useRef(null);
+  const canvasWrapRef = useRef(null);
   const pdfDocRef = useRef(null);
-  const renderTaskRef = useRef(null);
+  // 仅保留当前页和前后各一页；每项包含可复用的 canvas、文本层与渲染 Promise。
+  const pageCacheRef = useRef(new Map());
   const translateCacheRef = useRef(new Map()); // 页码 → 译文，减少重复请求
+  const referencesLoadedRef = useRef(0);
   const pdfScrollRef = useRef(null); // 左侧 PDF 滚动容器
   const sideScrollRef = useRef(null); // 右侧译文滚动容器
   const syncLockRef = useRef({ side: "", at: 0 }); // 防止两栏互相触发的滚动死循环
@@ -113,10 +114,15 @@ function ReadPageInner() {
   // 只依赖 pageCount 可能出现"文档已销毁、页码没变"的空渲染，用计数兜底重渲染。
   const [docReady, setDocReady] = useState(0);
   const [pageText, setPageText] = useState("");
+  const [textReadyPage, setTextReadyPage] = useState(0);
   const [translation, setTranslation] = useState("");
   const [translating, setTranslating] = useState(false);
-  const [status, setStatus] = useState("正在加载 PDF…");
+  const [visiblePage, setVisiblePage] = useState(0);
+  const [pageRendering, setPageRendering] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0);
+  const [status, setStatus] = useState("正在加载文档 0%…");
   const [error, setError] = useState("");
+  const firstPageReady = visiblePage > 0;
 
   // 目录面板开合、左右同步滚动开关
   const [tocOpen, setTocOpen] = useState(true);
@@ -136,98 +142,185 @@ function ReadPageInner() {
   const [selectionBusy, setSelectionBusy] = useState(false);
   const [floatButton, setFloatButton] = useState(null); // {x, y, text}
 
-  // ===== 1. 加载 PDF 文档 =====
+  // 渲染结果缓存到 DOM 节点，翻回相邻页时无需重新下载或绘制。
+  // 同一个 Promise 同时供当前页与预取任务复用，避免重复 render 同一页。
+  const renderPdfPage = useCallback((targetPage) => {
+    const cache = pageCacheRef.current;
+    const existing = cache.get(targetPage);
+    if (existing) return existing.promise;
+
+    const canvas = document.createElement("canvas");
+    const layer = document.createElement("div");
+    layer.className = "pdf-text-layer";
+    const entry = { canvas, layer, task: null, promise: null };
+
+    entry.promise = (async () => {
+      const doc = pdfDocRef.current;
+      if (!doc) throw new Error("PDF 尚未就绪");
+      const page = await doc.getPage(targetPage);
+      const viewport = page.getViewport({ scale: 1.35 });
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = viewport.width * ratio;
+      canvas.height = viewport.height * ratio;
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      layer.style.width = `${viewport.width}px`;
+      layer.style.height = `${viewport.height}px`;
+
+      const context = canvas.getContext("2d");
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      // 文本提取和画布绘制在 worker / 主线程并行，互不等待。
+      const textContentPromise = page.getTextContent();
+      entry.task = page.render({ canvasContext: context, viewport });
+      const [content] = await Promise.all([textContentPromise, entry.task.promise]);
+      entry.task = null;
+
+      // 文本层：把每个文字片段绝对定位到 canvas 上，才能用鼠标选中。
+      // 预取时节点尚未插入文档，因此用 canvas 测量文字宽度，而非 DOM 测量。
+      const measurer = document.createElement("canvas").getContext("2d");
+      for (const item of content.items) {
+        if (!item.str) continue;
+        const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+        const fontHeight = Math.hypot(tx[2], tx[3]);
+        if (!fontHeight) continue;
+
+        const span = document.createElement("span");
+        span.textContent = item.str;
+        span.style.left = `${tx[4]}px`;
+        span.style.top = `${tx[5] - fontHeight}px`;
+        span.style.fontSize = `${fontHeight}px`;
+        span.style.fontFamily = "sans-serif";
+        span.style.color = "transparent";
+        span.style.position = "absolute";
+        span.style.whiteSpace = "pre";
+        span.style.transformOrigin = "0 0";
+        layer.appendChild(span);
+
+        const targetWidth = item.width * viewport.scale;
+        measurer.font = `${fontHeight}px sans-serif`;
+        const measured = measurer.measureText(item.str).width;
+        if (measured > 0 && targetWidth > 0) {
+          span.style.transform = `scaleX(${targetWidth / measured})`;
+        }
+      }
+      return entry;
+    })();
+
+    cache.set(targetPage, entry);
+    entry.promise.catch(() => {
+      // 失败页不留在缓存里，下次翻到该页可以重试。
+      if (cache.get(targetPage) === entry) cache.delete(targetPage);
+    });
+    return entry.promise;
+  }, []);
+
+  // ===== 1. 加载 PDF 文档（与下方当前页文本请求并行）=====
   useEffect(() => {
     if (!paperId) {
       setError("缺少 paper_id 参数，请从论文库点「阅读」进入");
       return;
     }
     let cancelled = false;
+    let doc = null;
+    setError("");
+    setVisiblePage(0);
+    setPageRendering(false);
+    setPageNum(1);
+    setPageCount(0);
+    setLoadProgress(0);
+    setStatus("正在加载文档 0%…");
+    translateCacheRef.current.clear();
+    referencesLoadedRef.current = 0;
+
+    const loadingTask = pdfjsLib.getDocument({
+      url: `${apiBaseUrl}/api/papers/${paperId}/file`,
+      // 禁止自动拉取整本；64KB 小块避免为首页多下载无关内容（公网实测优于 512KB）。
+      disableAutoFetch: true,
+      disableStream: true,
+      rangeChunkSize: 64 * 1024,
+    });
+    loadingTask.onProgress = ({ loaded, total }) => {
+      if (cancelled) return;
+      const percent = total > 0
+        ? Math.min(99, Math.round((loaded / total) * 100))
+        : 0;
+      setLoadProgress(percent);
+      setStatus(total > 0
+        ? `正在加载文档 ${percent}%…`
+        : `正在加载文档 ${(loaded / 1024 / 1024).toFixed(1)} MB…`);
+    };
+
     (async () => {
       try {
-        const doc = await pdfjsLib.getDocument({
-          url: `${apiBaseUrl}/api/papers/${paperId}/file`,
-        }).promise;
-        if (cancelled) return;
+        doc = await loadingTask.promise;
+        if (cancelled) {
+          doc.destroy();
+          return;
+        }
         pdfDocRef.current = doc;
         setPageCount(doc.numPages);
+        setLoadProgress(100);
         setDocReady((value) => value + 1);
-        setStatus("");
       } catch (err) {
         if (!cancelled) setError(`PDF 加载失败：${err.message}`);
       }
     })();
+
     return () => {
       cancelled = true;
-      pdfDocRef.current?.destroy?.();
-      pdfDocRef.current = null;
+      for (const entry of pageCacheRef.current.values()) entry.task?.cancel?.();
+      pageCacheRef.current.clear();
+      loadingTask.destroy().catch(() => {});
+      if (pdfDocRef.current === doc) pdfDocRef.current = null;
     };
   }, [paperId]);
 
-  // ===== 2. 渲染某页：canvas 画原版 + 手写文本层支持划词 =====
+  // ===== 2. 当前页优先显示，再空闲预取前后各一页（缓存最多三页）=====
   useEffect(() => {
     let cancelled = false;
+    let prefetchTimer = null;
 
     async function render() {
       const doc = pdfDocRef.current;
       if (!doc) return;
+      setError("");
+      setPageRendering(true);
+      setStatus(`正在渲染第 ${pageNum} 页…`);
+
+      // 超出当前页 ±1 的画布立即释放，长文档不会随翻页累积内存。
+      for (const [cachedPage, entry] of pageCacheRef.current) {
+        if (Math.abs(cachedPage - pageNum) > 1) {
+          entry.task?.cancel?.();
+          pageCacheRef.current.delete(cachedPage);
+        }
+      }
+
       try {
-        const page = await doc.getPage(pageNum);
-        if (cancelled) return;
+        const entry = await renderPdfPage(pageNum);
+        if (cancelled || !canvasWrapRef.current) return;
+        canvasWrapRef.current.replaceChildren(entry.canvas, entry.layer);
+        setVisiblePage(pageNum);
+        setPageRendering(false);
+        setStatus("");
 
-        const viewport = page.getViewport({ scale: 1.35 });
-        const canvas = canvasRef.current;
-        const layer = textLayerRef.current;
-        if (!canvas || !layer) return;
-
-        const ratio = window.devicePixelRatio || 1;
-        canvas.width = viewport.width * ratio;
-        canvas.height = viewport.height * ratio;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        if (layer) {
-          layer.style.width = `${viewport.width}px`;
-          layer.style.height = `${viewport.height}px`;
-        }
-
-        renderTaskRef.current?.cancel?.();
-        const context = canvas.getContext("2d");
-        context.setTransform(ratio, 0, 0, ratio, 0, 0);
-        renderTaskRef.current = page.render({ canvasContext: context, viewport });
-        await renderTaskRef.current.promise;
-        if (cancelled) return;
-
-        // 文本层：把每个文字片段绝对定位到 canvas 上，才能用鼠标选中
-        layer.innerHTML = "";
-        const content = await page.getTextContent();
-        for (const item of content.items) {
-          if (!item.str) continue;
-          const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-          const fontHeight = Math.hypot(tx[2], tx[3]);
-          if (!fontHeight) continue;
-
-          const span = document.createElement("span");
-          span.textContent = item.str;
-          span.style.left = `${tx[4]}px`;
-          span.style.top = `${tx[5] - fontHeight}px`;
-          span.style.fontSize = `${fontHeight}px`;
-          span.style.fontFamily = "sans-serif";
-          span.style.color = "transparent";
-          span.style.position = "absolute";
-          span.style.whiteSpace = "pre";
-          span.style.transformOrigin = "0 0";
-          layer.appendChild(span);
-
-          // 按 PDF 里给出的实际宽度横向拉伸，保证选区覆盖原文字
-          const targetWidth = item.width * viewport.scale;
-          const measured = span.getBoundingClientRect().width;
-          if (measured > 0 && targetWidth > 0) {
-            span.style.transform = `scaleX(${targetWidth / measured})`;
+        // 首页已经可见后才预取邻居，不与首屏争夺带宽和主线程。
+        prefetchTimer = window.setTimeout(async () => {
+          for (const neighbor of [pageNum - 1, pageNum + 1]) {
+            if (cancelled || neighbor < 1 || neighbor > doc.numPages) continue;
+            try {
+              await renderPdfPage(neighbor);
+            } catch (err) {
+              if (!cancelled && err?.name !== "RenderingCancelledException") {
+                // 邻居预取失败不影响阅读，真正翻到该页时会重新尝试。
+                pageCacheRef.current.delete(neighbor);
+              }
+            }
           }
-        }
+        }, 150);
       } catch (err) {
         if (err?.name !== "RenderingCancelledException" && !cancelled) {
           setError(`第 ${pageNum} 页渲染失败：${err.message}`);
+          setPageRendering(false);
         }
       }
     }
@@ -235,14 +328,18 @@ function ReadPageInner() {
     render();
     return () => {
       cancelled = true;
+      if (prefetchTimer) window.clearTimeout(prefetchTimer);
     };
-  }, [pageNum, docReady]);
+  }, [pageNum, docReady, renderPdfPage]);
 
-  // ===== 3. 取该页文本并翻译 =====
+  // ===== 3a. 当前页文本立即请求，与 PDF 文件下载并行 =====
   useEffect(() => {
     if (!paperId) return;
     let cancelled = false;
     setPageText("");
+    setTextReadyPage(0);
+    setTranslation("");
+    setTranslating(false);
     setSelectionResult(null);
     setFloatButton(null);
 
@@ -256,25 +353,41 @@ function ReadPageInner() {
         if (!response.ok) throw new Error(data.detail ?? "取页面文本失败");
         if (cancelled) return;
         setPageText(data.text || "");
+        setTextReadyPage(pageNum);
         setPageCount(data.page_count || 0);
+      } catch (err) {
+        if (!cancelled) setTranslation(`页面文本加载失败：${err.message}`);
+      }
+    })();
 
-        const cached = translateCacheRef.current.get(pageNum);
-        if (cached) {
-          setTranslation(cached);
-          return;
-        }
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId, pageNum]);
 
-        setTranslating(true);
-        const tr = await fetch(`${apiBaseUrl}/api/translate`, {
+  // ===== 3b. 当前页真正可见后才翻译；同页译文只请求一次 =====
+  useEffect(() => {
+    if (!paperId || visiblePage !== pageNum || textReadyPage !== pageNum) return;
+    if (translateCacheRef.current.has(pageNum)) {
+      setTranslation(translateCacheRef.current.get(pageNum));
+      setTranslating(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTranslating(true);
+    (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/translate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: data.text }),
+          body: JSON.stringify({ text: pageText }),
         });
-        const trData = await tr.json();
-        if (cancelled) return;
-        if (!tr.ok) throw new Error(trData.detail ?? "翻译失败");
-        translateCacheRef.current.set(pageNum, trData.translation);
-        setTranslation(trData.translation);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail ?? "翻译失败");
+        // 即使用户已翻页也保留结果，之后回来不必再调用模型。
+        translateCacheRef.current.set(pageNum, data.translation);
+        if (!cancelled) setTranslation(data.translation);
       } catch (err) {
         if (!cancelled) setTranslation(`翻译失败：${err.message}`);
       } finally {
@@ -285,31 +398,63 @@ function ReadPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [paperId, pageNum]);
+  }, [paperId, pageNum, pageText, textReadyPage, visiblePage]);
 
-  // ===== 4. 参考文献解析（一次） =====
+  // ===== 4. 参考文献延迟到用户打开标签页时再请求，不占首屏带宽 =====
   useEffect(() => {
-    if (!paperId) return;
+    if (!paperId || tab !== "references" || referencesLoadedRef.current === paperId) return;
+    let cancelled = false;
     fetch(`${apiBaseUrl}/api/papers/${paperId}/references`, { cache: "no-store" })
       .then((r) => r.json())
-      .then((data) => setReferences({ entries: data.entries || [], first_pages: data.first_pages || {} }))
+      .then((data) => {
+        if (cancelled) return;
+        setReferences({ entries: data.entries || [], first_pages: data.first_pages || {} });
+        referencesLoadedRef.current = paperId;
+      })
       .catch(() => {});
-  }, [paperId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId, tab]);
 
-  // ===== 4b. 结构化条目（一次） =====
+  // 参考文献可能是点击正文引用后才加载，数据到达后再完成定位。
   useEffect(() => {
-    if (!paperId) return;
+    if (tab !== "references" || activeCitation === null || references.entries.length === 0) return;
+    const target = references.entries.find((entry) => entry.index === activeCitation);
+    // 延迟加载前无法判断目标是否位于折叠区；数据到达后先展开，再由下一轮 effect 定位。
+    if (target?.low_quality && !showLowRefs) {
+      setShowLowRefs(true);
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`ref-entry-${activeCitation}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [tab, references, activeCitation, showLowRefs]);
+
+  // ===== 4b. 结构目录在首页可见后加载；每篇论文只取一次 =====
+  useEffect(() => {
+    if (!paperId || !firstPageReady) return;
+    let cancelled = false;
     fetch(`${apiBaseUrl}/api/papers/${paperId}/structure`, { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
           throw new Error(data.detail ?? `加载失败（HTTP ${response.status}）`);
         }
+        if (cancelled) return;
         setStructure({ counts: data.counts || {}, items: data.items || [] });
         setStructureError("");
       })
-      .catch((error) => setStructureError(error.message));
-  }, [paperId]);
+      .catch((error) => {
+        if (!cancelled) setStructureError(error.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [paperId, firstPageReady]);
 
   // ===== 4c. 整篇翻译：按页顺序请求，命中缓存直接跳过 =====
   // 只逐页串行调用（并发会打爆 LLM 限流），每完成一页刷新一次进度。
@@ -438,11 +583,6 @@ function ReadPageInner() {
     if (references.entries.find((entry) => entry.index === index)?.low_quality) {
       setShowLowRefs(true);
     }
-    requestAnimationFrame(() => {
-      document
-        .getElementById(`ref-entry-${index}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
   }
 
   function jumpToBody(index) {
@@ -577,7 +717,6 @@ function ReadPageInner() {
       </header>
 
       {error ? <p className="message error">{error}</p> : null}
-      {status ? <p className="message">{status}</p> : null}
 
       {bulk?.running ? (
         <div className="bulk-bar">
@@ -633,9 +772,19 @@ function ReadPageInner() {
             ref={pdfScrollRef}
             onScroll={() => handleSyncScroll("pdf")}
           >
-            <div className="pdf-canvas-wrap">
-              <canvas ref={canvasRef} />
-              <div ref={textLayerRef} className="pdf-text-layer" />
+            <div className="pdf-stage">
+              <div className="pdf-canvas-wrap" ref={canvasWrapRef} />
+              {(visiblePage === 0 || pageRendering) && !error ? (
+                <div className="pdf-loading" role="status" aria-live="polite">
+                  <div className="pdf-skeleton-page" aria-hidden="true">
+                    <span /><span /><span /><span /><span /><span />
+                  </div>
+                  <p>{status || `正在加载第 ${pageNum} 页…`}</p>
+                  <div className="pdf-load-track" aria-hidden="true">
+                    <span style={{ width: `${visiblePage === 0 ? loadProgress : 100}%` }} />
+                  </div>
+                </div>
+              ) : null}
             </div>
             <p className="pdf-tip">在页面上拖选英文，会弹出「翻译」按钮</p>
           </div>

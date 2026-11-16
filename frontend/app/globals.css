@@ -1118,6 +1118,11 @@ button.danger:hover {
   transition: width 0.2s ease;
 }
 
+.pdf-stage {
+  position: relative;
+  min-height: 480px;
+}
+
 .pdf-canvas-wrap {
   position: relative;
   width: fit-content;
@@ -1127,6 +1132,72 @@ button.danger:hover {
 }
 
 .pdf-canvas-wrap canvas { display: block; }
+
+/* 首屏与翻页加载层：用纸张骨架替代白屏，并展示真实的 PDF 下载进度。 */
+.pdf-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 480px;
+  padding: 24px;
+  background: #eef1f5;
+}
+
+.pdf-skeleton-page {
+  width: min(82%, 430px);
+  aspect-ratio: 0.72;
+  padding: 42px 36px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+}
+
+.pdf-skeleton-page span {
+  display: block;
+  height: 12px;
+  margin-bottom: 18px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  animation: pdf-skeleton-pulse 1.2s ease-in-out infinite alternate;
+}
+
+.pdf-skeleton-page span:first-child { width: 72%; height: 20px; margin-bottom: 30px; }
+.pdf-skeleton-page span:nth-child(2) { width: 92%; }
+.pdf-skeleton-page span:nth-child(3) { width: 84%; }
+.pdf-skeleton-page span:nth-child(4) { width: 96%; }
+.pdf-skeleton-page span:nth-child(5) { width: 66%; margin-bottom: 34px; }
+.pdf-skeleton-page span:nth-child(6) { width: 88%; }
+
+@keyframes pdf-skeleton-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+.pdf-loading p {
+  margin: 22px 0 10px;
+  color: #475569;
+  font-size: 14px;
+}
+
+.pdf-load-track {
+  width: min(80%, 360px);
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe3ee;
+}
+
+.pdf-load-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.2s ease;
+}
 
 /* 文本层必须浮在 canvas 上，才能用鼠标选中文字 */
 .pdf-text-layer {

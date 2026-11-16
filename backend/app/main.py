@@ -9,12 +9,24 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import db, rag
 from .routers import ask, csv_view, papers, translate, writing
 
 logging.basicConfig(level=logging.INFO)
+
+
+class ReaderGZipMiddleware(GZipMiddleware):
+    """压缩静态资源，但跳过 PDF，保留 pdf.js 按需 Range 所需的长度标头。"""
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if path.startswith("/api/papers/") and path.endswith("/file"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 
 
 @asynccontextmanager
@@ -50,6 +62,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# pdf.js worker 与 Next.js 静态脚本体积较大，公网隧道下 gzip 能显著减少传输量。
+app.add_middleware(ReaderGZipMiddleware, minimum_size=1024)
 
 # 首次启动就要有可用的数据库结构，导入期直接建表（IF NOT EXISTS）。
 db.init_db()
