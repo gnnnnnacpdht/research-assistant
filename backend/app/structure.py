@@ -48,25 +48,162 @@ _LLM_FRONT_PROMPT = """从论文首页文本中抽取元信息，只输出一个
 {"title": "论文标题", "authors": "作者与机构，一行概括"}
 找不到的字段填空字符串，不要解释，不要输出 Markdown 代码块。"""
 
+# ---- 参考文献"含金量"判据 ----
+# 领域经典工作：被引说明作者确实读过并站在其肩膀上，而不是凑数
+_CLASSIC_KEYWORDS = (
+    "attention", "transformer", "bert", "resnet", "residual", "lstm", "gru",
+    "adam", "sgd", "word2vec", "glove", "dropout", "batchnorm",
+    "batch normalization", "imagenet", "coco", "alexnet", "vgg",
+    "seq2seq", "gan", "gpt", "clip", "diffusion",
+)
+# 正文里连续堆叠的引用标记：[12,13,14]、[12][13][14]、[12] [13] [14]
+_STACKED_RE = re.compile(
+    r"\[(\d{1,3}(?:\s*[,–\-]\s*\d{1,3})+)\]|((?:\[\d{1,3}\]\s*){3,})"
+)
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _matches_library(entry_text: str, library_titles: list[str]) -> bool:
+    """参考文献条目是否对应库内已收录的论文（标题前 8 词或 arXiv ID 命中）。"""
+    normalized = _normalize_text(entry_text)
+    for title in library_titles:
+        stripped = (title or "").strip()
+        if re.fullmatch(r"\d{4}\.\d{4,5}(v\d+)?", stripped, re.IGNORECASE):
+            base = re.sub(r"v\d+$", "", stripped)
+            if base and base in entry_text:
+                return True
+            continue
+        candidate = _normalize_text(stripped)
+        if len(candidate) < 20:
+            continue
+        probe = " ".join(candidate.split()[:8])
+        if probe and probe in normalized:
+            return True
+    return False
+
+
+def _reference_quality(
+    entry_text: str,
+    *,
+    index: int,
+    first_pages: dict[int, int],
+    mention_counts: Counter,
+    stacked: set[int],
+    contexts: dict[int, str],
+    related_range: tuple[int, int] | None,
+    library_titles: list[str],
+) -> dict:
+    """给一条参考文献打 0-100 的含金量分，并说明依据。
+
+    基准 30 分：编进参考文献列表本身说明作者认为它相关；
+    加分项是"能验证作者真读过"的信号（库内可查、经典、出现在 Related Work、正文多次提及），
+    减分项是应付式引用（与一堆编号堆叠在一起、正文没有具体描述）。
+    """
+    lowered = entry_text.lower()
+    classic = [word for word in _CLASSIC_KEYWORDS if word in lowered][:4]
+    in_library = _matches_library(entry_text, library_titles)
+    page = first_pages.get(index)
+    in_related = bool(
+        related_range and page and related_range[0] <= page <= related_range[1]
+    )
+    mentions = mention_counts.get(index, 0)
+    is_stacked = index in stacked
+    # 正文里根本没出现的条目不算"应付式引用"，只在出现时才判断有没有描述
+    context = contexts.get(index)
+    described = (
+        True
+        if context is None
+        else len(re.findall(r"[A-Za-z]{2,}", CITATION_RE.sub(" ", context))) >= 6
+    )
+
+    score = 30
+    tags: list[str] = []
+    if in_library:
+        score += 30
+        tags.append("库内已收录")
+    if classic:
+        score += min(30, 10 * len(classic))
+        tags.append("经典工作：" + "、".join(classic))
+    if in_related:
+        score += 15
+        tags.append("出现在 Related Work")
+    if mentions >= 2:
+        score += 10
+        tags.append(f"正文提及 {mentions} 次")
+    if is_stacked:
+        score -= 30
+        tags.append("与多个引用堆叠")
+    if not described:
+        score -= 15
+        tags.append("正文无具体描述")
+    score = max(0, min(100, score))
+
+    return {
+        "score": score,
+        # 应付式引用：只作为编号串出现（≥3 个连排）且没有任何经典/库内价值
+        "low_quality": bool(
+            (is_stacked and not classic and not in_library) or (not described and not classic and not in_library)
+        ),
+        "in_library": in_library,
+        "classic": classic,
+        "related_work": in_related,
+        "mentions": mentions,
+        "quality_tags": tags,
+    }
+
 
 def _lines(text: str) -> list[str]:
     """按行切分并去掉空行，后续规则都基于"视觉行"判断。"""
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
-def parse_references(pages: list[tuple[int, str]]) -> dict:
-    """从分页文本里解析参考文献条目与正文首现页码。
+def parse_references(
+    pages: list[tuple[int, str]],
+    related_range: tuple[int, int] | None = None,
+    library_titles: list[str] | None = None,
+) -> dict:
+    """从分页文本里解析参考文献条目与正文首现页码，并给每条打含金量标记。
+
+    Args:
+        pages: 分页文本
+        related_range: Related Work 章节的页码区间（含两端），用于判断引用位置
+        library_titles: 库内论文标题/文件名，用于判断被引文献是否已收录
 
     Returns:
-        entries: [{index, page, text}]，按 [n] 切分出的条目
+        entries: [{index, page, text, score, low_quality, ...}]
         first_pages: {编号: 正文首次出现页码}
         reference_page: References 标题所在页码
     """
+    library_titles = library_titles or []
     start = None
     for position, (_, text) in enumerate(pages):
         if re.search(r"(?m)^\s*References\s*$", text):
             # 取最后一次出现：正文里出现 "References" 字样（如表格列名）不算参考文献区
             start = position
+
+    # 正文首现页：只看 References 之前的部分
+    body_pages = pages[:start] if start is not None else pages
+    first_pages: dict[int, int] = {}
+    mention_counts: Counter = Counter()
+    contexts: dict[int, str] = {}
+    stacked: set[int] = set()
+
+    for number, text in body_pages:
+        for match in CITATION_RE.finditer(text):
+            index = int(match.group(1))
+            first_pages.setdefault(index, number)
+            mention_counts[index] += 1
+            # 记录首现处上下文，判断是否"只有编号没有描述"
+            if index not in contexts:
+                begin = max(0, match.start() - 80)
+                contexts[index] = text[begin : match.start() + 20]
+        for group in _STACKED_RE.finditer(text):
+            indices = [int(value) for value in re.findall(r"\d{1,3}", group.group(0))]
+            if len(indices) >= 3:
+                stacked.update(indices)
 
     entries: list[dict] = []
     if start is not None:
@@ -98,18 +235,25 @@ def parse_references(pages: list[tuple[int, str]]) -> dict:
                 unique[entry["index"]] = entry
         entries = [unique[key] for key in sorted(unique)]
 
-    # 正文首现页：只看 References 之前的部分
-    body_pages = pages[:start] if start is not None else pages
-    first_pages: dict[int, int] = {}
-    for number, text in body_pages:
-        for match in CITATION_RE.finditer(text):
-            index = int(match.group(1))
-            first_pages.setdefault(index, number)
+    for entry in entries:
+        entry.update(
+            _reference_quality(
+                entry["text"],
+                index=entry["index"],
+                first_pages=first_pages,
+                mention_counts=mention_counts,
+                stacked=stacked,
+                contexts=contexts,
+                related_range=related_range,
+                library_titles=library_titles,
+            )
+        )
 
     return {
         "entries": entries,
         "first_pages": {str(key): value for key, value in sorted(first_pages.items())},
         "reference_page": pages[start][0] if start is not None else None,
+        "low_quality_count": sum(1 for entry in entries if entry["low_quality"]),
     }
 
 

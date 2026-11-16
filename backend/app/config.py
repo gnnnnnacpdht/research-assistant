@@ -43,6 +43,10 @@ RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 CHROMA_DIR = Path(os.getenv("CHROMA_DIR", DATA_DIR / "chroma"))
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "papers")
 
+# ---- arXiv 检索 ----
+# 官方 Atom 接口；如需走镜像可在此覆盖。
+ARXIV_API_BASE = os.getenv("ARXIV_API_BASE", "http://export.arxiv.org/api/query")
+
 # ---- 检索参数（PROJECT.md 要求：检索 top5，重排后取前 3）----
 RETRIEVE_TOP_K = int(os.getenv("RETRIEVE_TOP_K", "5"))
 RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "3"))

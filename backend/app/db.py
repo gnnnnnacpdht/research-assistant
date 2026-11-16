@@ -36,7 +36,8 @@ def init_db() -> None:
                 stored_path TEXT NOT NULL,
                 page_count INTEGER NOT NULL,
                 uploaded_at TEXT NOT NULL,
-                full_text TEXT NOT NULL
+                full_text TEXT NOT NULL,
+                github_url TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS pages (
@@ -65,6 +66,18 @@ def init_db() -> None:
             """
         )
         _migrate_pages_ocr_column(connection)
+        _migrate_papers_github_column(connection)
+
+
+def _migrate_papers_github_column(connection: sqlite3.Connection) -> None:
+    """老库的 papers 表没有 github_url 字段，启动时补上（默认空串）。"""
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(papers)").fetchall()
+    }
+    if "github_url" not in columns:
+        connection.execute(
+            "ALTER TABLE papers ADD COLUMN github_url TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def _migrate_pages_ocr_column(connection: sqlite3.Connection) -> None:
@@ -79,7 +92,10 @@ def _migrate_pages_ocr_column(connection: sqlite3.Connection) -> None:
 
 
 def save_paper(
-    filename: str, stored_path: Path, pages: "list[ParsedPage]"
+    filename: str,
+    stored_path: Path,
+    pages: "list[ParsedPage]",
+    github_url: str = "",
 ) -> dict:
     """写入论文及其分页文本，返回给接口使用的摘要信息。"""
     full_text = "\n\n".join(page.text for page in pages)
@@ -88,10 +104,11 @@ def save_paper(
     with _connect() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO papers (filename, stored_path, page_count, uploaded_at, full_text)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO papers
+                (filename, stored_path, page_count, uploaded_at, full_text, github_url)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (filename, str(stored_path), len(pages), uploaded_at, full_text),
+            (filename, str(stored_path), len(pages), uploaded_at, full_text, github_url),
         )
         paper_id = int(cursor.lastrowid)
         connection.executemany(
@@ -108,6 +125,7 @@ def save_paper(
         "page_count": len(pages),
         "uploaded_at": uploaded_at,
         "text_chars": len(full_text),
+        "github_url": github_url,
         "ocr_pages": sum(1 for page in pages if page.ocr),
         # OCR 失败或页面本身空白时，这些页在检索里查不到，需要提示用户。
         "empty_pages": sum(1 for page in pages if not page.text.strip()),
@@ -118,7 +136,10 @@ def list_papers() -> list[dict]:
     """按上传时间倒序返回论文列表，不含全文以减小响应体积。"""
     with _connect() as connection:
         rows = connection.execute(
-            "SELECT id, filename, page_count, uploaded_at FROM papers ORDER BY id DESC"
+            """
+            SELECT id, filename, page_count, uploaded_at, github_url
+            FROM papers ORDER BY id DESC
+            """
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -127,10 +148,70 @@ def get_paper(paper_id: int) -> dict | None:
     """按 id 取单篇论文元数据；带上 stored_path 供 PDF 原文件下载接口使用。"""
     with _connect() as connection:
         row = connection.execute(
-            "SELECT id, filename, stored_path, page_count, uploaded_at FROM papers WHERE id = ?",
+            """
+            SELECT id, filename, stored_path, page_count, uploaded_at, github_url
+            FROM papers WHERE id = ?
+            """,
             (paper_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def find_paper_by_arxiv_id(arxiv_id: str) -> dict | None:
+    """按文件名里的 arXiv ID 判断论文是否已入库，避免重复导入。"""
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, filename, page_count, uploaded_at, github_url
+            FROM papers WHERE filename LIKE ? ORDER BY id LIMIT 1
+            """,
+            (f"%{arxiv_id}%",),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_paper_titles() -> list[str]:
+    """取库内论文标题（结构化抽取的 title）与文件名，供参考文献"库内已收录"判断。"""
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT p.filename AS filename, s.content AS title
+            FROM papers p
+            LEFT JOIN structure s
+                ON s.paper_id = p.id AND s.type = 'title'
+            """
+        ).fetchall()
+
+    titles: list[str] = []
+    for row in rows:
+        if row["title"]:
+            titles.append(str(row["title"]))
+        # 文件名去掉扩展名/arXiv 前缀后也当作一个可匹配的标题片段
+        stem = Path(str(row["filename"])).stem
+        titles.append(stem)
+    return titles
+
+
+def list_structure_titles() -> list[str]:
+    """只取结构化抽取出的论文标题（推荐接口统计关键词用，标题比正文干净）。"""
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT content FROM structure WHERE type = 'title' ORDER BY paper_id"
+        ).fetchall()
+    return [str(row["content"]) for row in rows if row["content"]]
+
+
+def list_paper_samples(char_limit: int = 4000) -> list[dict]:
+    """取每篇论文的开头一段文本（标题+摘要），用于推荐接口的关键词统计。
+
+    不返回全文：541 页教材单篇就有 130 万字符，全量拼接会拖慢推荐响应。
+    """
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT id, filename, substr(full_text, 1, ?) AS sample FROM papers",
+            (char_limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_pages(paper_id: int) -> list[tuple[int, str]]:

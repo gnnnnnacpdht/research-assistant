@@ -41,6 +41,12 @@ export default function PapersPage() {
   const [revisionSummary, setRevisionSummary] = useState("");
   const [revisionTargetId, setRevisionTargetId] = useState(null);
   const fileInputRef = useRef(null);
+  // arXiv 导入与推荐
+  const [arxivQuery, setArxivQuery] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [arxivMessage, setArxivMessage] = useState("");
+  const [recommend, setRecommend] = useState({ keywords: [], items: [], message: "" });
+  const [recommendLoading, setRecommendLoading] = useState(false);
 
   const loadPapers = useCallback(async () => {
     try {
@@ -59,9 +65,39 @@ export default function PapersPage() {
     }
   }, []);
 
+  // 推荐依赖库内论文的关键词统计，所以放在论文列表加载完之后单独请求，
+  // 即使 arXiv 网络慢/失败也不影响论文库本身打开。
+  const loadRecommendations = useCallback(async () => {
+    setRecommendLoading(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/papers/recommend?limit=3`, {
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail ?? `推荐加载失败（HTTP ${response.status}）`);
+      setRecommend({
+        keywords: data.keywords || [],
+        items: data.items || [],
+        message: data.message || "",
+      });
+    } catch (error) {
+      setRecommend({ keywords: [], items: [], message: error.message });
+    } finally {
+      setRecommendLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadPapers();
-  }, [loadPapers]);
+    loadRecommendations();
+  }, [loadPapers, loadRecommendations]);
+
+  // 上传/arXiv 导入共用：进入去重弹窗
+  function openDedupe(data, fallbackName) {
+    setDedupeToken(data.token || "");
+    setDuplicates(data.duplicates || papers);
+    setDedupeFilename(data.filename || fallbackName);
+  }
 
   async function handleUpload(event) {
     event.preventDefault();
@@ -88,9 +124,13 @@ export default function PapersPage() {
       if (response.status === 309) {
         // 后端检测到疑似重复，返回 JSONResponse 带 body（token/duplicates）+ headers
         const dupData = await response.json().catch(() => ({}));
-        setDedupeToken(dupData.token || response.headers.get("X-Dedupe-Token") || "");
-        setDuplicates(dupData.duplicates || papers);
-        setDedupeFilename(dupData.filename || file.name);
+        openDedupe(
+          {
+            ...dupData,
+            token: dupData.token || response.headers.get("X-Dedupe-Token") || "",
+          },
+          file.name,
+        );
         return;
       }
 
@@ -114,6 +154,68 @@ export default function PapersPage() {
     } finally {
       setUploading(false);
     }
+  }
+
+  // 从 arXiv 检索并导入：query 可以是 arXiv ID，也可以是标题关键词
+  async function importFromArxiv(query) {
+    const text = (query || "").trim();
+    if (!text) {
+      setArxivMessage("请输入 arXiv ID（如 1706.03762）或标题关键词");
+      return;
+    }
+
+    setImporting(true);
+    setArxivMessage("");
+    setRevisionSummary("");
+    setRevisionTargetId(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/papers/fetch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: text }),
+      });
+
+      if (response.status === 309) {
+        const dupData = await response.json().catch(() => ({}));
+        openDedupe(
+          {
+            ...dupData,
+            token: dupData.token || response.headers.get("X-Dedupe-Token") || "",
+          },
+          dupData.filename || text,
+        );
+        return;
+      }
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail ?? `导入失败（HTTP ${response.status}）`);
+      }
+
+      if (data.already_imported) {
+        setArxivMessage(
+          `《${data.arxiv.title}》已在库中（ID ${data.paper.id}），未重复下载。`,
+        );
+      } else {
+        const paper = data.paper || {};
+        setArxivMessage(
+          `已导入：《${data.arxiv.title}》（${paper.page_count} 页，${data.arxiv.year}）` +
+            (paper.github_url ? `，识别到开源仓库 ${paper.github_url}` : ""),
+        );
+      }
+      setArxivQuery("");
+      await loadPapers();
+      await loadRecommendations();
+    } catch (error) {
+      setArxivMessage(error.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function handleArxivImport(event) {
+    event.preventDefault();
+    importFromArxiv(arxivQuery);
   }
 
   async function handleConfirm(action, replaceIds) {
@@ -257,6 +359,77 @@ export default function PapersPage() {
       </section>
 
       <section className="card">
+        <h2>从 arXiv 导入</h2>
+        <form className="upload-form" onSubmit={handleArxivImport}>
+          <input
+            type="text"
+            value={arxivQuery}
+            onChange={(event) => setArxivQuery(event.target.value)}
+            placeholder="arXiv ID（1706.03762）或标题关键词，如 large language model"
+            disabled={importing}
+          />
+          <button className="primary" type="submit" disabled={importing}>
+            {importing ? "检索下载中…" : "检索并导入"}
+          </button>
+        </form>
+        <p className="hint">
+          系统调用 arXiv 官方接口取相关度最高的一篇，自动下载 PDF 并走解析、去重、索引流程。
+        </p>
+        {arxivMessage ? <p className="message">{arxivMessage}</p> : null}
+      </section>
+
+      <section className="card">
+        <div className="list-head">
+          <h2>推荐论文</h2>
+          <button
+            className="secondary"
+            type="button"
+            onClick={loadRecommendations}
+            disabled={recommendLoading}
+          >
+            {recommendLoading ? "计算中…" : "刷新推荐"}
+          </button>
+        </div>
+        <p className="hint">
+          基于库内论文的关键词共现（
+          {recommend.keywords.length > 0 ? recommend.keywords.join("、") : "暂无"}）检索 arXiv。
+        </p>
+        {recommend.message ? <p className="message">{recommend.message}</p> : null}
+        {recommend.items.length > 0 ? (
+          <div className="recommend-grid">
+            {recommend.items.map((item) => (
+              <article className="recommend-card" key={item.arxiv_id}>
+                <h3>{item.title}</h3>
+                <p className="recommend-meta">
+                  {item.authors.slice(0, 3).join("、")}
+                  {item.authors.length > 3 ? " 等" : ""} · {item.year} · arXiv:{item.arxiv_id}
+                </p>
+                <p className="recommend-reason">
+                  {item.reason}
+                  {item.has_github ? (
+                    <span className="badge-open">开源复现</span>
+                  ) : null}
+                </p>
+                <div className="recommend-actions">
+                  <a className="secondary read-link" href={item.abs_url} target="_blank" rel="noreferrer">
+                    arXiv 页面
+                  </a>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={importing}
+                    onClick={() => importFromArxiv(item.arxiv_id)}
+                  >
+                    一键导入
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="card">
         <div className="list-head">
           <h2>已入库论文（{papers.length}）</h2>
           <button className="secondary" type="button" onClick={loadPapers}>
@@ -286,7 +459,20 @@ export default function PapersPage() {
                 {papers.map((paper) => (
                   <tr key={paper.id}>
                     <td>{paper.id}</td>
-                    <td>{paper.filename}</td>
+                    <td>
+                      {paper.filename}
+                      {paper.github_url ? (
+                        <a
+                          className="badge-open"
+                          href={paper.github_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={paper.github_url}
+                        >
+                          开源复现
+                        </a>
+                      ) : null}
+                    </td>
                     <td>{paper.page_count}</td>
                     <td>{formatTime(paper.uploaded_at)}</td>
                     <td>

@@ -104,6 +104,8 @@ function ReadPageInner() {
 
   const [tab, setTab] = useState("translate"); // translate | references | structure
   const [references, setReferences] = useState({ entries: [], first_pages: {} });
+  // 低含金量（应付式）引用默认折叠，跳转命中时自动展开
+  const [showLowRefs, setShowLowRefs] = useState(false);
   // 结构化视图：一次取全部条目，切标签页不再重复请求
   const [structure, setStructure] = useState({ counts: {}, items: [] });
   const [structureError, setStructureError] = useState("");
@@ -329,6 +331,10 @@ function ReadPageInner() {
   function jumpToReference(index) {
     setActiveCitation(index);
     setTab("references");
+    // 目标条目若属于低含金量折叠区，先展开再滚动，否则滚到不存在的节点
+    if (references.entries.find((entry) => entry.index === index)?.low_quality) {
+      setShowLowRefs(true);
+    }
     requestAnimationFrame(() => {
       document
         .getElementById(`ref-entry-${index}`)
@@ -344,6 +350,43 @@ function ReadPageInner() {
   }
 
   const citations = extractCitations(pageText);
+
+  // 含金量分组：低含金量（应付式）引用默认折叠，避免淹没真正有价值的文献
+  const qualityRefs = references.entries.filter((entry) => !entry.low_quality);
+  const lowQualityRefs = references.entries.filter((entry) => entry.low_quality);
+
+  function renderRefEntry(entry) {
+    const level = entry.score >= 60 ? "high" : entry.score >= 40 ? "mid" : "low";
+    return (
+      <li
+        key={`${entry.index}-${entry.page}`}
+        id={`ref-entry-${entry.index}`}
+        className={activeCitation === entry.index ? "ref-item active" : "ref-item"}
+      >
+        <div className="ref-text">
+          <span className="ref-index">[{entry.index}]</span> {entry.text}
+        </div>
+        <div className="ref-meta">
+          <span className={`ref-quality ${level}`}>含金量 {entry.score}</span>
+          {entry.quality_tags?.length ? (
+            <span className="ref-tags">{entry.quality_tags.join(" · ")}</span>
+          ) : null}
+        </div>
+        <div className="ref-actions">
+          <span className="ref-page">P.{entry.page}</span>
+          {references.first_pages?.[String(entry.index)] ? (
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => jumpToBody(entry.index)}
+            >
+              ↑ 跳到正文 P.{references.first_pages[String(entry.index)]}
+            </button>
+          ) : null}
+        </div>
+      </li>
+    );
+  }
 
   // ===== 7. 结构化视图的派生数据 =====
   const structureByType = (type) => structure.items.filter((item) => item.type === type);
@@ -487,31 +530,26 @@ function ReadPageInner() {
               {references.entries.length === 0 ? (
                 <p className="message">未解析到参考文献条目。</p>
               ) : (
-                <ol className="ref-list">
-                  {references.entries.map((entry) => (
-                    <li
-                      key={`${entry.index}-${entry.page}`}
-                      id={`ref-entry-${entry.index}`}
-                      className={activeCitation === entry.index ? "ref-item active" : "ref-item"}
-                    >
-                      <div className="ref-text">
-                        <span className="ref-index">[{entry.index}]</span> {entry.text}
-                      </div>
-                      <div className="ref-actions">
-                        <span className="ref-page">P.{entry.page}</span>
-                        {references.first_pages?.[String(entry.index)] ? (
-                          <button
-                            type="button"
-                            className="link-button"
-                            onClick={() => jumpToBody(entry.index)}
-                          >
-                            ↑ 跳到正文 P.{references.first_pages[String(entry.index)]}
-                          </button>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
+                <>
+                  <ol className="ref-list">{qualityRefs.map((entry) => renderRefEntry(entry))}</ol>
+                  {lowQualityRefs.length > 0 ? (
+                    <div className="low-ref-box">
+                      <button
+                        type="button"
+                        className="secondary low-ref-toggle"
+                        onClick={() => setShowLowRefs((value) => !value)}
+                      >
+                        {showLowRefs ? "收起" : "展开"} {lowQualityRefs.length} 条低含金量引用
+                        （应付式引用：编号堆叠或无具体描述）
+                      </button>
+                      {showLowRefs ? (
+                        <ol className="ref-list low-ref-list">
+                          {lowQualityRefs.map((entry) => renderRefEntry(entry))}
+                        </ol>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
               )}
             </div>
           ) : (

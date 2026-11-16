@@ -1,12 +1,13 @@
 """论文接口：PDF 上传解析入库、去重确认、版本对比、论文列表查询、向量索引重建、结构化查询。"""
 
+import re
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from .. import db, dedupe, rag, structure
+from .. import arxiv_client, db, dedupe, rag, structure
 from ..pdf_parser import extract_pages
 from ..structure import parse_references
 
@@ -16,10 +17,19 @@ MAX_PDF_BYTES = 100 * 1024 * 1024  # 单文件上限 100MB，防止误传超大�
 
 
 def _do_save_and_index(
-    background_tasks: BackgroundTasks, filename: str, stored_path: Path, pages: list
+    background_tasks: BackgroundTasks,
+    filename: str,
+    stored_path: Path,
+    pages: list,
+    github_url: str = "",
 ) -> dict:
     """解析完成后的共用逻辑：写库 + 后台索引 + 后台结构化抽取 + 返回摘要。"""
-    paper = db.save_paper(filename, stored_path, pages)
+    # arXiv 元信息里没写代码地址时，再从正文里找一遍（很多论文把仓库放在脚注/实验章节）
+    if not github_url:
+        github_url = arxiv_client.extract_github_url(
+            "\n".join(page.text for page in pages[:5])
+        )
+    paper = db.save_paper(filename, stored_path, pages, github_url=github_url)
     background_tasks.add_task(rag.index_paper_safely, paper["id"])
     # 结构化抽取涉及版式分析，体积大的 PDF 可能耗时，放后台避免拖慢上传响应。
     background_tasks.add_task(structure.extract_and_save_safely, paper["id"], stored_path)
@@ -187,6 +197,90 @@ def cancel_pending(payload: dict) -> dict:
     return {"cancelled": True}
 
 
+@router.post("/fetch")
+def fetch_from_arxiv(background_tasks: BackgroundTasks, payload: dict) -> dict:
+    """从 arXiv 检索第一篇结果并直接下载入库。
+
+    入参 query 支持 arXiv ID（1706.03762 / arXiv:1706.03762v7）或标题关键词。
+    入库复用上传接口的解析、相似度检测、索引与结构化流程，
+    因此疑似重复时同样返回 309，交回前端去重弹窗处理。
+    """
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="请输入 arXiv ID 或标题关键词")
+
+    try:
+        results = arxiv_client.search(query, max_results=5)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"arXiv 检索失败：{exc}") from exc
+
+    if not results:
+        raise HTTPException(status_code=404, detail="arXiv 未找到匹配论文，请换个关键词")
+
+    item = results[0]
+    arxiv_id = item["arxiv_id"].split("/")[-1]
+    base_id = re.sub(r"v\d+$", "", arxiv_id)
+
+    # 已入库（文件名里含同一 arXiv ID）直接返回，不做重复下载
+    existing = db.find_paper_by_arxiv_id(base_id) if base_id else None
+    if existing is not None:
+        return {"already_imported": True, "paper": existing, "arxiv": item}
+
+    try:
+        content = arxiv_client.download_pdf(item["pdf_url"])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"PDF 下载失败：{exc}") from exc
+
+    filename = f"{arxiv_id}.pdf"
+    db.PDF_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = db.PDF_DIR / f"pending_{uuid.uuid4().hex}_{filename}"
+    tmp_path.write_bytes(content)
+
+    try:
+        pages = extract_pages(tmp_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"PDF 解析失败：{exc}") from exc
+    if not pages:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="PDF 没有可读取的页面")
+
+    full_text = "\n\n".join(page.text for page in pages)
+    try:
+        duplicates = dedupe.compare_full_texts(full_text)
+    except RuntimeError:
+        duplicates = []  # 向量化不可用时放行，与上传接口保持一致
+
+    if duplicates:
+        token = dedupe.enqueue_pending(tmp_path, filename, pages, full_text)
+        return JSONResponse(
+            status_code=309,
+            headers={"X-Dedupe-Token": token, "X-Dedupe-Count": str(len(duplicates))},
+            content={
+                "detail": "检测到疑似重复论文",
+                "token": token,
+                "filename": filename,
+                "duplicates": duplicates,
+                "arxiv": item,
+            },
+        )
+
+    stored_path = db.PDF_DIR / f"{uuid.uuid4().hex}_{filename}"
+    tmp_path.rename(stored_path)
+    paper = _do_save_and_index(
+        background_tasks, filename, stored_path, pages, github_url=item["github_url"]
+    )
+    return {"already_imported": False, "paper": paper, "arxiv": item}
+
+
+@router.get("/recommend")
+def recommend_papers(limit: int = Query(default=3, ge=1, le=10)) -> dict:
+    """基于库内论文关键词共现，推荐 arXiv 上的相关新论文。"""
+    from .. import recommend
+
+    return recommend.build_recommendations(limit)
+
+
 @router.get("")
 def get_papers() -> list[dict]:
     """返回论文列表（id、文件名、页数、上传时间），按最新上传在前排序。"""
@@ -228,19 +322,38 @@ def get_paper_page(paper_id: int, page_num: int) -> dict:
     raise HTTPException(status_code=404, detail=f"第 {page_num} 页不存在")
 
 
+def _related_work_range(headings: list[dict]) -> tuple[int, int] | None:
+    """Related Work 章节的页码范围：从该标题所在页到下一个标题的前一页。"""
+    for position, heading in enumerate(headings):
+        if re.search(r"(?i)related\s+work", heading["content"]):
+            start = int(heading["page_num"])
+            later = [
+                int(item["page_num"])
+                for item in headings[position + 1 :]
+                if int(item["page_num"]) > start
+            ]
+            return start, (min(later) - 1 if later else start + 1)
+    return None
+
+
 @router.get("/{paper_id}/references")
 def get_references(paper_id: int) -> dict:
     """解析参考文献条目，供正文 [n] 与文献列表双向跳转。
 
     末尾的 References 段落用正则按 [n] 切分；同时记录每个编号在正文里首次出现的页码，
-    这样点文献条目能跳回正文。
+    这样点文献条目能跳回正文。每条还会带含金量评分（库内/经典/位置/是否堆叠）。
     """
     paper = db.get_paper(paper_id)
     if paper is None:
         raise HTTPException(status_code=404, detail="论文不存在")
 
     pages = db.get_pages(paper_id)
-    return {"paper_id": paper_id, **parse_references(pages)}
+    parsed = parse_references(
+        pages,
+        related_range=_related_work_range(db.get_structure(paper_id, "heading")),
+        library_titles=db.list_paper_titles(),
+    )
+    return {"paper_id": paper_id, **parsed}
 
 
 @router.get("/{paper_id}/structure")

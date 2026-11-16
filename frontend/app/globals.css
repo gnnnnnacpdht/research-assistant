@@ -590,6 +590,76 @@ button.danger:hover {
 
 .read-link:hover { background: #eef4ff; }
 
+/* ========== arXiv 导入与推荐 ========== */
+.hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8892a4;
+}
+
+.recommend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.recommend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #e0e6f2;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.recommend-card h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #172033;
+}
+
+.recommend-meta {
+  margin: 0;
+  font-size: 12px;
+  color: #8892a4;
+  line-height: 1.6;
+}
+
+.recommend-reason {
+  margin: 0;
+  font-size: 13px;
+  color: #3157d5;
+  line-height: 1.6;
+}
+
+.recommend-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.recommend-actions .read-link { margin-right: 0; }
+
+/* 开源复现徽章：库列表与推荐卡片共用 */
+.badge-open {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #e8f7ee;
+  color: #1a7f4b;
+  font-size: 12px;
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.badge-open:hover { background: #d5f0e0; }
+
 /* ========== CSV Copilot ========== */
 .chart-switch { display: flex; gap: 6px; }
 
@@ -923,6 +993,41 @@ button.danger:hover {
   margin-top: 6px;
   font-size: 12px;
   color: #9ca3af;
+}
+
+/* 含金量标记：高分绿、中等蓝、低分灰 */
+.ref-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.ref-quality {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ref-quality.high { background: #e8f7ee; color: #1a7f4b; }
+.ref-quality.mid { background: #eef3ff; color: #3b63d9; }
+.ref-quality.low { background: #f1f3f7; color: #7a8699; }
+
+.ref-tags { font-size: 11px; color: #9ca3af; }
+
+.low-ref-box { margin-top: 14px; }
+
+.low-ref-toggle {
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+
+.low-ref-list {
+  margin-top: 10px;
+  opacity: 0.85;
 }
 
 /* ===== 结构化视图：标题树 / 表格 / 公式 / 参考文献 ===== */
