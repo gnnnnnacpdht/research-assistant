@@ -63,6 +63,13 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_structure_paper
                 ON structure (paper_id, type);
+
+            -- 自动综述缓存：同一论文的生成结果只算一次（DeepSeek 调用要花钱）
+            CREATE TABLE IF NOT EXISTS survey_cache (
+                paper_id INTEGER PRIMARY KEY REFERENCES papers(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         _migrate_pages_ocr_column(connection)
@@ -260,6 +267,26 @@ def get_structure(paper_id: int, item_type: str | None = None) -> list[dict]:
     with _connect() as connection:
         rows = connection.execute(sql, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_survey(paper_id: int) -> dict | None:
+    """取已缓存的自动综述，没有则返回 None。"""
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT content, created_at FROM survey_cache WHERE paper_id = ?",
+            (paper_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_survey(paper_id: int, content: str) -> None:
+    """覆盖写入综述缓存（重新生成时用 REPLACE，避免主键冲突）。"""
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _connect() as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO survey_cache (paper_id, content, created_at) VALUES (?, ?, ?)",
+            (paper_id, content, created_at),
+        )
 
 
 def delete_paper(paper_id: int) -> dict | None:

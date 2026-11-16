@@ -409,6 +409,22 @@ def get_citations(paper_id: int) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/{paper_id}/survey")
+def get_survey(paper_id: int, refresh: bool = False) -> dict:
+    """生成或读取缓存的领域综述 + 三个 Future Work 方向。
+
+    refresh=true 时忽略缓存重新生成（前端"重新生成"按钮用）。
+    """
+    from .. import survey
+
+    try:
+        return survey.build_survey(paper_id, refresh=refresh)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/{paper_id}/index")
 def reindex_paper(paper_id: int) -> dict:
     """手动重建某篇论文的向量索引，用于索引失败后重试。"""

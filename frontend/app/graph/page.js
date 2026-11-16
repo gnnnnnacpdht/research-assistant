@@ -110,6 +110,12 @@ function GraphInner() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
+  // 自动综述弹层
+  const [survey, setSurvey] = useState(null);
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyLoading, setSurveyLoading] = useState(false);
+  const [surveyError, setSurveyError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,6 +135,51 @@ function GraphInner() {
       cancelled = true;
     };
   }, [paperId]);
+
+  // 生成综述：首次命中后端缓存，refresh=true 强制重新生成
+  async function generateSurvey(refresh = false) {
+    setSurveyOpen(true);
+    setSurveyLoading(true);
+    setSurveyError("");
+    setCopied(false);
+    try {
+      const suffix = refresh ? "?refresh=true" : "";
+      const response = await fetch(
+        `${apiBaseUrl}/api/papers/${paperId}/survey${suffix}`,
+        { cache: "no-store" },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail ?? "综述生成失败");
+      setSurvey(payload);
+    } catch (err) {
+      setSurveyError(err.message);
+    } finally {
+      setSurveyLoading(false);
+    }
+  }
+
+  function surveyText(item) {
+    const directions = (item.directions || [])
+      .map(
+        (direction, position) =>
+          `${position + 1}. ${direction.title}\n` +
+          `为什么值得做：${direction.why}\n` +
+          `已有工作做到：${direction.prior_work}`,
+      )
+      .join("\n\n");
+    return `【领域综述】\n${item.overview}\n\n【未来方向】\n${directions}`;
+  }
+
+  async function copySurvey() {
+    if (!survey) return;
+    try {
+      await navigator.clipboard.writeText(surveyText(survey));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setSurveyError("复制失败，请手动选中文本复制");
+    }
+  }
 
   const flow = useMemo(() => (data ? buildLayout(data) : { nodes: [], edges: [] }), [data]);
 
@@ -178,6 +229,14 @@ function GraphInner() {
         <span className="graph-stat">
           {data.node_count} 条被引文献 · 参考文献起始 P.{data.reference_page ?? "?"}
         </span>
+        <button
+          className="primary"
+          type="button"
+          onClick={() => generateSurvey(false)}
+          disabled={surveyLoading}
+        >
+          {surveyLoading ? "生成中…" : "生成综述"}
+        </button>
       </header>
 
       <div className="graph-body">
@@ -266,6 +325,73 @@ function GraphInner() {
           </section>
         </aside>
       </div>
+
+      {surveyOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setSurveyOpen(false);
+            setCopied(false);
+          }}
+        >
+          <div
+            className="modal-card survey-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="survey-head">
+              <h2>自动综述 · {data.filename}</h2>
+              <span className="survey-cache">
+                {survey?.cached ? "来自缓存（未重复调用模型）" : ""}
+              </span>
+            </div>
+
+            {surveyLoading ? <p className="message">正在生成综述，约需 10-30 秒…</p> : null}
+            {surveyError ? <p className="message error">{surveyError}</p> : null}
+
+            {survey && !surveyLoading ? (
+              <>
+                <section className="survey-section">
+                  <h3>领域综述</h3>
+                  <div className="survey-overview">{survey.overview}</div>
+                </section>
+
+                <section className="survey-section">
+                  <h3>Future Work 三个方向</h3>
+                  {(survey.directions || []).map((direction, position) => (
+                    <article className="survey-direction" key={position}>
+                      <h4>
+                        {position + 1}. {direction.title}
+                      </h4>
+                      <p>
+                        <span className="survey-label">为什么值得做</span>
+                        {direction.why}
+                      </p>
+                      <p>
+                        <span className="survey-label">已有工作做到</span>
+                        {direction.prior_work}
+                      </p>
+                    </article>
+                  ))}
+                </section>
+
+                <div className="modal-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => generateSurvey(true)}
+                    disabled={surveyLoading}
+                  >
+                    重新生成
+                  </button>
+                  <button className="primary" type="button" onClick={copySurvey}>
+                    {copied ? "已复制 ✓" : "一键复制"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
