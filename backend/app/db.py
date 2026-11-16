@@ -82,3 +82,23 @@ def list_papers() -> list[dict]:
             "SELECT id, filename, page_count, uploaded_at FROM papers ORDER BY id DESC"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_paper(paper_id: int) -> dict | None:
+    """按 id 取单篇论文元数据，供向量库写入片段时带上文件名。"""
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT id, filename, page_count, uploaded_at FROM papers WHERE id = ?",
+            (paper_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_pages(paper_id: int) -> list[tuple[int, str]]:
+    """按页码顺序返回某篇论文的分页文本，切块时依赖页码顺序保持原文先后。"""
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT page_number, text FROM pages WHERE paper_id = ? ORDER BY page_number",
+            (paper_id,),
+        ).fetchall()
+    return [(int(row["page_number"]), str(row["text"])) for row in rows]

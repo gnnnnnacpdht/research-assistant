@@ -1,11 +1,11 @@
-"""论文接口：PDF 上传解析入库、论文列表查询。"""
+"""论文接口：PDF 上传解析入库、论文列表查询、向量索引重建。"""
 
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 
-from .. import db
+from .. import db, rag
 from ..pdf_parser import extract_pages
 
 router = APIRouter(prefix="/api/papers", tags=["论文"])
@@ -14,8 +14,14 @@ MAX_PDF_BYTES = 100 * 1024 * 1024  # 单文件上限 100MB，防止误传超大�
 
 
 @router.post("/upload", status_code=201)
-def upload_paper(file: UploadFile = File(...)) -> dict:
-    """接收 PDF，保存原文件到 data/pdfs/，逐页提取文本后写入 SQLite。"""
+def upload_paper(
+    background_tasks: BackgroundTasks, file: UploadFile = File(...)
+) -> dict:
+    """接收 PDF，保存原文件到 data/pdfs/，逐页提取文本后写入 SQLite。
+
+    解析成功后把向量化丢到后台任务：541 页的长文档要调上百次 embedding，
+    放在请求里会超时，但直接返回会让用户以为可以马上提问。
+    """
     filename = Path(file.filename or "").name
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 .pdf 文件")
@@ -43,10 +49,25 @@ def upload_paper(file: UploadFile = File(...)) -> dict:
         stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="PDF 没有可读取的页面")
 
-    return db.save_paper(filename, stored_path, pages)
+    paper = db.save_paper(filename, stored_path, pages)
+    # 响应先返回，索引在后台进行；索引完成后即可参与问答检索。
+    background_tasks.add_task(rag.index_paper_safely, paper["id"])
+    return {**paper, "indexing": True}
 
 
 @router.get("")
 def get_papers() -> list[dict]:
     """返回论文列表（id、文件名、页数、上传时间），按最新上传在前排序。"""
     return db.list_papers()
+
+
+@router.post("/{paper_id}/index")
+def reindex_paper(paper_id: int) -> dict:
+    """手动重建某篇论文的向量索引，用于索引失败后重试。"""
+    try:
+        chunk_count = rag.index_paper(paper_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"paper_id": paper_id, "chunks": chunk_count}

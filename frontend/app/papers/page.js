@@ -88,6 +88,11 @@ export default function PapersPage() {
         <a className="secondary link-back" href="/">
           ← 返回首页
         </a>
+        <div>
+          <a className="ask-entry" href="/ask">
+            进入智能问答 →
+          </a>
+        </div>
       </section>
 
       <section className="card">
