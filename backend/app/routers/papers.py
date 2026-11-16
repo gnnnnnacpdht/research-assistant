@@ -1,88 +1,28 @@
-"""论文接口：PDF 上传解析入库、去重确认、版本对比、论文列表查询、向量索引重建。"""
+"""论文接口：PDF 上传解析入库、去重确认、版本对比、论文列表查询、向量索引重建、结构化查询。"""
 
-import os
-import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from .. import db, dedupe, rag
+from .. import db, dedupe, rag, structure
 from ..pdf_parser import extract_pages
+from ..structure import parse_references
 
 router = APIRouter(prefix="/api/papers", tags=["论文"])
 
 MAX_PDF_BYTES = 100 * 1024 * 1024  # 单文件上限 100MB，防止误传超大文件占满磁盘
 
-CITATION_RE = re.compile(r"\[(\d{1,3})\]")
-
-
-def parse_references(pages: list[tuple[int, str]]) -> dict:
-    """从分页文本里解析参考文献条目与正文首现页码。
-
-    Returns:
-        entries: [{index, page, text}]，按 [n] 切分出的条目
-        first_pages: {编号: 正文首次出现页码}
-        reference_page: References 标题所在页码
-    """
-    start = None
-    for position, (_, text) in enumerate(pages):
-        if re.search(r"(?m)^\s*References\s*$", text):
-            # 取最后一次出现：正文里出现 "References" 字样（如表格列名）不算参考文献区
-            start = position
-
-    entries: list[dict] = []
-    if start is not None:
-        # 拼接 References 及之后的所有页面，并记录每段文本对应的页码
-        spans: list[tuple[int, int, int]] = []
-        pieces: list[str] = []
-        cursor = 0
-        for number, text in pages[start:]:
-            piece = text + "\n"
-            spans.append((cursor, cursor + len(piece), number))
-            pieces.append(piece)
-            cursor += len(piece)
-        joined = "".join(pieces)
-
-        matches = list(CITATION_RE.finditer(joined))
-        for position, match in enumerate(matches):
-            end = matches[position + 1].start() if position + 1 < len(matches) else len(joined)
-            body = re.sub(r"\s+", " ", joined[match.end():end]).strip()
-            if len(body) < 10:
-                continue  # 跳过 "[2]" 这种孤立的编号残片
-            page = next(p for begin, finish, p in spans if begin <= match.start() < finish)
-            entries.append({"index": int(match.group(1)), "page": page, "text": body[:600]})
-
-        # 同一编号可能重复出现（跨页被切断），保留文本最长的一条，并按编号排序
-        unique: dict[int, dict] = {}
-        for entry in entries:
-            kept = unique.get(entry["index"])
-            if kept is None or len(entry["text"]) > len(kept["text"]):
-                unique[entry["index"]] = entry
-        entries = [unique[key] for key in sorted(unique)]
-
-    # 正文首现页：只看 References 之前的部分
-    body_pages = pages[:start] if start is not None else pages
-    first_pages: dict[int, int] = {}
-    for number, text in body_pages:
-        for match in CITATION_RE.finditer(text):
-            index = int(match.group(1))
-            first_pages.setdefault(index, number)
-
-    return {
-        "entries": entries,
-        "first_pages": {str(key): value for key, value in sorted(first_pages.items())},
-        "reference_page": pages[start][0] if start is not None else None,
-    }
-
 
 def _do_save_and_index(
     background_tasks: BackgroundTasks, filename: str, stored_path: Path, pages: list
 ) -> dict:
-    """解析完成后的共用逻辑：写库 + 后台索引 + 返回摘要。"""
+    """解析完成后的共用逻辑：写库 + 后台索引 + 后台结构化抽取 + 返回摘要。"""
     paper = db.save_paper(filename, stored_path, pages)
     background_tasks.add_task(rag.index_paper_safely, paper["id"])
+    # 结构化抽取涉及版式分析，体积大的 PDF 可能耗时，放后台避免拖慢上传响应。
+    background_tasks.add_task(structure.extract_and_save_safely, paper["id"], stored_path)
     result = {**paper, "indexing": True}
     if paper["empty_pages"]:
         result["warning"] = (
@@ -301,6 +241,46 @@ def get_references(paper_id: int) -> dict:
 
     pages = db.get_pages(paper_id)
     return {"paper_id": paper_id, **parse_references(pages)}
+
+
+@router.get("/{paper_id}/structure")
+def get_paper_structure(
+    paper_id: int, item_type: str | None = Query(default=None, alias="type")
+) -> dict:
+    """返回某篇论文的结构化条目，可按 type 过滤（如 heading）。
+
+    一次性返回全部条目并附带各类型计数，前端切换标签页时无需重复请求。
+    """
+    paper = db.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+
+    items = db.get_structure(paper_id)
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item["type"]] = counts.get(item["type"], 0) + 1
+
+    if item_type:
+        items = [item for item in items if item["type"] == item_type]
+
+    return {
+        "paper_id": paper_id,
+        "filename": paper["filename"],
+        "counts": counts,
+        "items": items,
+    }
+
+
+@router.post("/{paper_id}/structure/rebuild")
+def rebuild_structure(paper_id: int) -> dict:
+    """手动重抽结构（用于结构化能力上线前入库的历史论文）。"""
+    paper = db.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    try:
+        return structure.extract_and_save(paper_id, Path(paper["stored_path"]))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"结构化抽取失败：{exc}") from exc
 
 
 @router.get("/{paper_id}/citations")

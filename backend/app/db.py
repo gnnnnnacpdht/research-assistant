@@ -48,6 +48,20 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_pages_paper_id ON pages (paper_id);
+
+            -- 细粒度结构化条目：标题/作者/摘要/章节/表格/公式/参考文献
+            CREATE TABLE IF NOT EXISTS structure (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                level INTEGER NOT NULL DEFAULT 0,
+                page_num INTEGER NOT NULL DEFAULT 0,
+                seq INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_structure_paper
+                ON structure (paper_id, type);
             """
         )
         _migrate_pages_ocr_column(connection)
@@ -127,6 +141,44 @@ def get_pages(paper_id: int) -> list[tuple[int, str]]:
             (paper_id,),
         ).fetchall()
     return [(int(row["page_number"]), str(row["text"])) for row in rows]
+
+
+def save_structure(paper_id: int, items: list[dict]) -> int:
+    """覆盖写入某篇论文的结构化条目，返回写入条数（重复抽取是幂等的）。"""
+    with _connect() as connection:
+        connection.execute("DELETE FROM structure WHERE paper_id = ?", (paper_id,))
+        connection.executemany(
+            """
+            INSERT INTO structure (paper_id, type, content, level, page_num, seq)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    paper_id,
+                    item["type"],
+                    item["content"],
+                    int(item.get("level", 0)),
+                    int(item.get("page_num", 0)),
+                    position,
+                )
+                for position, item in enumerate(items)
+            ],
+        )
+    return len(items)
+
+
+def get_structure(paper_id: int, item_type: str | None = None) -> list[dict]:
+    """按抽取顺序返回结构化条目；item_type 为空时返回全部类型。"""
+    sql = "SELECT type, content, level, page_num FROM structure WHERE paper_id = ?"
+    params: list = [paper_id]
+    if item_type:
+        sql += " AND type = ?"
+        params.append(item_type)
+    sql += " ORDER BY seq"
+
+    with _connect() as connection:
+        rows = connection.execute(sql, params).fetchall()
+    return [dict(row) for row in rows]
 
 
 def delete_paper(paper_id: int) -> dict | None:

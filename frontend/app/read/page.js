@@ -19,6 +19,66 @@ function extractCitations(text) {
   return [...found].sort((a, b) => a - b);
 }
 
+// 把扁平的章节列表按 level 还原成树：层级回退时弹栈，直到找到更高级的父节点。
+function buildHeadingTree(headings) {
+  const root = { level: 0, children: [] };
+  const stack = [root];
+  for (const heading of headings) {
+    const node = { ...heading, children: [] };
+    while (stack.length > 1 && stack[stack.length - 1].level >= node.level) {
+      stack.pop();
+    }
+    stack[stack.length - 1].children.push(node);
+    stack.push(node);
+  }
+  return root.children;
+}
+
+// 可折叠标题树；点击标题跳到对应页，但不要顺带折叠/展开。
+function HeadingTree({ nodes, onJump }) {
+  if (!nodes || nodes.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="struct-tree">
+      {nodes.map((node) => (
+        <li key={`${node.level}-${node.page_num}-${node.content}`}>
+          {node.children.length > 0 ? (
+            <details open={node.level <= 2}>
+              <summary>
+                <button
+                  type="button"
+                  className="struct-heading"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onJump(node.page_num);
+                  }}
+                >
+                  {node.content}
+                </button>
+                <span className="struct-page">P.{node.page_num}</span>
+              </summary>
+              <HeadingTree nodes={node.children} onJump={onJump} />
+            </details>
+          ) : (
+            <div className="struct-leaf">
+              <button
+                type="button"
+                className="struct-heading"
+                onClick={() => onJump(node.page_num)}
+              >
+                {node.content}
+              </button>
+              <span className="struct-page">P.{node.page_num}</span>
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ReadPageInner() {
   const searchParams = useSearchParams();
   const paperId = Number(searchParams.get("paper_id") || 0);
@@ -40,8 +100,11 @@ function ReadPageInner() {
   const [status, setStatus] = useState("正在加载 PDF…");
   const [error, setError] = useState("");
 
-  const [tab, setTab] = useState("translate"); // translate | references
+  const [tab, setTab] = useState("translate"); // translate | references | structure
   const [references, setReferences] = useState({ entries: [], first_pages: {} });
+  // 结构化视图：一次取全部条目，切标签页不再重复请求
+  const [structure, setStructure] = useState({ counts: {}, items: [] });
+  const [structureError, setStructureError] = useState("");
   const [activeCitation, setActiveCitation] = useState(null);
   const [selectionResult, setSelectionResult] = useState(null); // {text, translation}
   const [selectionBusy, setSelectionBusy] = useState(false);
@@ -207,6 +270,21 @@ function ReadPageInner() {
       .catch(() => {});
   }, [paperId]);
 
+  // ===== 4b. 结构化条目（一次） =====
+  useEffect(() => {
+    if (!paperId) return;
+    fetch(`${apiBaseUrl}/api/papers/${paperId}/structure`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail ?? `加载失败（HTTP ${response.status}）`);
+        }
+        setStructure({ counts: data.counts || {}, items: data.items || [] });
+        setStructureError("");
+      })
+      .catch((error) => setStructureError(error.message));
+  }, [paperId]);
+
   // ===== 5. 划词翻译：鼠标松开后取选区，显示浮动按钮 =====
   const handleMouseUp = useCallback(() => {
     const selection = window.getSelection();
@@ -264,6 +342,20 @@ function ReadPageInner() {
   }
 
   const citations = extractCitations(pageText);
+
+  // ===== 7. 结构化视图的派生数据 =====
+  const structureByType = (type) => structure.items.filter((item) => item.type === type);
+  const headings = structureByType("heading");
+  const tables = structureByType("table");
+  const formulas = structureByType("formula");
+  const structReferences = structureByType("reference");
+  const metaTitle = structureByType("title")[0];
+  const metaAuthor = structureByType("author")[0];
+  const metaAbstract = structureByType("abstract")[0];
+
+  function jumpToStructPage(page) {
+    if (page) setPageNum(Number(page));
+  }
 
   if (!paperId) {
     return (
@@ -336,6 +428,13 @@ function ReadPageInner() {
             >
               参考文献（{references.entries.length}）
             </button>
+            <button
+              type="button"
+              className={tab === "structure" ? "tab active" : "tab"}
+              onClick={() => setTab("structure")}
+            >
+              结构化视图（{structure.items.length}）
+            </button>
           </div>
 
           {tab === "translate" ? (
@@ -380,7 +479,7 @@ function ReadPageInner() {
                 <div className="translation-text">{translation}</div>
               )}
             </div>
-          ) : (
+          ) : tab === "references" ? (
             <div className="pane-content">
               <h3 className="pane-title">参考文献</h3>
               {references.entries.length === 0 ? (
@@ -412,6 +511,94 @@ function ReadPageInner() {
                   ))}
                 </ol>
               )}
+            </div>
+          ) : (
+            <div className="pane-content">
+              <h3 className="pane-title">结构化视图</h3>
+              {structureError ? <p className="message error">{structureError}</p> : null}
+              {!structureError && structure.items.length === 0 ? (
+                <p className="message">
+                  该论文尚未完成结构化抽取。新上传的论文会在后台自动抽取，稍后刷新本页即可。
+                </p>
+              ) : null}
+
+              {metaTitle ? (
+                <div className="struct-meta">
+                  <h4>{metaTitle.content}</h4>
+                  {metaAuthor ? <p>{metaAuthor.content}</p> : null}
+                  {metaAbstract ? (
+                    <details>
+                      <summary>摘要</summary>
+                      <p>{metaAbstract.content}</p>
+                    </details>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {headings.length > 0 ? (
+                <>
+                  <h4 className="struct-title">章节标题树（{headings.length}）</h4>
+                  <HeadingTree nodes={buildHeadingTree(headings)} onJump={jumpToStructPage} />
+                </>
+              ) : null}
+
+              {tables.length > 0 ? (
+                <>
+                  <h4 className="struct-title">表格（{tables.length}）</h4>
+                  {tables.map((table, index) => (
+                    <div className="struct-card" key={`table-${index}`}>
+                      <button
+                        type="button"
+                        className="struct-page"
+                        onClick={() => jumpToStructPage(table.page_num)}
+                      >
+                        P.{table.page_num}
+                      </button>
+                      <pre className="struct-pre">{table.content}</pre>
+                    </div>
+                  ))}
+                </>
+              ) : null}
+
+              {formulas.length > 0 ? (
+                <>
+                  <h4 className="struct-title">公式（{formulas.length}）</h4>
+                  <ul className="struct-list">
+                    {formulas.map((formula, index) => (
+                      <li key={`formula-${index}`}>
+                        <button
+                          type="button"
+                          className="struct-page"
+                          onClick={() => jumpToStructPage(formula.page_num)}
+                        >
+                          P.{formula.page_num}
+                        </button>
+                        <code>{formula.content}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+
+              {structReferences.length > 0 ? (
+                <>
+                  <h4 className="struct-title">参考文献（{structReferences.length}）</h4>
+                  <ul className="struct-list">
+                    {structReferences.map((reference, index) => (
+                      <li key={`struct-ref-${index}`}>
+                        <button
+                          type="button"
+                          className="struct-page"
+                          onClick={() => jumpToStructPage(reference.page_num)}
+                        >
+                          P.{reference.page_num}
+                        </button>
+                        <span>{reference.content}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </div>
           )}
         </section>

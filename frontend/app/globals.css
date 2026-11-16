@@ -925,6 +925,115 @@ button.danger:hover {
   color: #9ca3af;
 }
 
+/* ===== 结构化视图：标题树 / 表格 / 公式 / 参考文献 ===== */
+.struct-meta {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.struct-meta h4 { margin: 0 0 8px; font-size: 16px; color: #111827; }
+
+.struct-meta p { margin: 0 0 8px; font-size: 12px; line-height: 1.7; color: #4b5563; }
+
+.struct-meta details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.struct-meta details p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.8;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.struct-title {
+  margin: 18px 0 10px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.struct-tree {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+/* 每级缩进一点，视觉上体现一/二/三级标题的层级 */
+.struct-tree .struct-tree { padding-left: 14px; }
+
+.struct-tree summary { cursor: pointer; line-height: 1.9; }
+
+.struct-leaf { line-height: 1.9; }
+
+.struct-heading {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: #1f2937;
+  text-align: left;
+  cursor: pointer;
+}
+
+.struct-heading:hover { color: #1d4ed8; text-decoration: underline; }
+
+.struct-page {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: none;
+  border-radius: 999px;
+  background: #e8eefc;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.struct-page:hover { background: #1d4ed8; color: #fff; }
+
+.struct-card {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.struct-pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.struct-list { list-style: none; margin: 0; padding: 0; }
+
+.struct-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #eef1f6;
+  font-size: 12px;
+  line-height: 1.75;
+  color: #374151;
+}
+
+.struct-list li code {
+  font-size: 12px;
+  color: #0f172a;
+  word-break: break-word;
+}
+
 .float-translate {
   position: fixed;
   transform: translate(-50%, -100%);

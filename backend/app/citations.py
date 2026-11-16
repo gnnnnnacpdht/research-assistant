@@ -13,7 +13,7 @@ import re
 import networkx as nx
 
 from . import db
-from .routers.papers import CITATION_RE, parse_references
+from .structure import CITATION_RE, parse_references
 
 # 领域经典工作关键词 → 经典度（0-1）。命中即认为该文献在本领域影响面大。
 FAMOUS_KEYWORDS: dict[str, float] = {
