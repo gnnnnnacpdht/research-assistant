@@ -181,6 +181,21 @@ function GraphInner() {
     }
   }
 
+  function closeSurvey() {
+    setSurveyOpen(false);
+    setCopied(false);
+  }
+
+  // Esc 关闭弹层：遮罩点击、右上角 ✕ 之外的第三种退出方式
+  useEffect(() => {
+    if (!surveyOpen) return undefined;
+    function onKeyDown(event) {
+      if (event.key === "Escape") closeSurvey();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [surveyOpen]);
+
   const flow = useMemo(() => (data ? buildLayout(data) : { nodes: [], edges: [] }), [data]);
 
   // 兜底：后端没返回 top5 时，用节点的 importance 现场排序，保证列表不为空
@@ -327,22 +342,26 @@ function GraphInner() {
       </div>
 
       {surveyOpen ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            setSurveyOpen(false);
-            setCopied(false);
-          }}
-        >
+        <div className="modal-backdrop" onClick={closeSurvey}>
           <div
             className="modal-card survey-modal"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="survey-head">
               <h2>自动综述 · {data.filename}</h2>
-              <span className="survey-cache">
-                {survey?.cached ? "来自缓存（未重复调用模型）" : ""}
-              </span>
+              <div className="survey-head-right">
+                <span className="survey-cache">
+                  {survey?.cached ? "来自缓存（未重复调用模型）" : ""}
+                </span>
+                <button
+                  type="button"
+                  className="modal-close"
+                  aria-label="关闭综述弹层"
+                  onClick={closeSurvey}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {surveyLoading ? <p className="message">正在生成综述，约需 10-30 秒…</p> : null}

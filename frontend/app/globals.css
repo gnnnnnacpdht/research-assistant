@@ -508,6 +508,27 @@ button.danger:hover {
 
 .survey-cache { font-size: 12px; color: #9ca3af; }
 
+.survey-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 弹层右上角关闭按钮：遮罩点击与 Esc 之外的显式入口 */
+.modal-close {
+  border: none;
+  background: #f1f3f8;
+  color: #5d6b82;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover { background: #e2e8f5; color: #172033; }
+
 .survey-section { margin-top: 18px; }
 
 .survey-section h3 {
