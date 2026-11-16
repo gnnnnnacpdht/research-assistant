@@ -1,0 +1,10 @@
+model,task,bleu,train_hours,params_m
+Transformer (base),WMT14 EN-DE,27.3,12,65
+Transformer (big),WMT14 EN-DE,28.4,84,213
+ConvS2S,WMT14 EN-DE,25.16,96,210
+GNMT,WMT14 EN-DE,24.61,384,278
+ByteNet,WMT14 EN-DE,23.75,120,320
+Transformer (base),WMT14 EN-FR,38.1,12,65
+Transformer (big),WMT14 EN-FR,41.0,84,213
+ConvS2S,WMT14 EN-FR,40.46,96,210
+GNMT,WMT14 EN-FR,39.92,384,278

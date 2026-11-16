@@ -14,6 +14,9 @@ export default function Home() {
           <a className="primary" href="/papers">
             进入论文库
           </a>
+          <a className="secondary" href="/copilot">
+            数据可视化 Copilot
+          </a>
           <a className="secondary" href={`${apiBaseUrl}/api/health`}>
             检查后端状态
           </a>

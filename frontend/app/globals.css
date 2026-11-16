@@ -504,6 +504,39 @@ button.danger:hover {
 
 .read-link:hover { background: #eef4ff; }
 
+/* ========== CSV Copilot ========== */
+.chart-switch { display: flex; gap: 6px; }
+
+.chart-switch .tab {
+  flex: none;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.chart-switch .tab.active {
+  background: #eef4ff;
+  color: #1d4ed8;
+  border-color: #c7d7fe;
+  box-shadow: none;
+}
+
+.chart-box { height: 420px; padding: 8px 4px; }
+
+.caption-en {
+  margin: 0 0 10px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border-left: 3px solid #2563eb;
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #1f2937;
+}
+
+.caption-zh { margin: 0; font-size: 13px; line-height: 1.8; color: #4b5563; }
+
 /* ========== 引用图谱页 ========== */
 .graph-page {
   max-width: 1600px;

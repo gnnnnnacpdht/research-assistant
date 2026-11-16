@@ -3,6 +3,36 @@
 更新时间：2026-11-16  
 当前阶段：P1-1 双语阅读、P1-2 引用图谱均已完成实测；P0 全部完成。
 
+## 2026-11-16 · P2-2 CSV 数据可视化 Copilot
+
+### 后端
+
+| 文件 | 内容 |
+|---|---|
+| `app/routers/csv_view.py`（新增） | `POST /api/csv/analyze`：CSV 解析（兼容 UTF-8/GBK）→ 逐列类型判断与统计 → DeepSeek 生成英文图注 + 中文说明 |
+| `app/main.py` | 注册 CSV 路由 |
+
+- 列类型判定：可转数值比例 ≥ 80% 视为 numeric，给出 min/max/mean/median；否则视为 category，给出 distinct 与样例值。
+- 图注 prompt 要求"只依据给定统计量，不得编造"，输出严格 JSON；解析失败或模型不可用时回退到本地统计拼出的兜底图注（页面不会空白）。
+- 统一补 `Figure 1.` 前缀，避免模型有时写有时不写。
+
+### 前端 `/copilot`
+
+- 上传 CSV 后前端自己解析（支持引号转义）用于画图，后端只负责"看懂数据 + 写图注"；
+- Chart.js 渲染柱状图 / 折线图，可一键切表格视图；
+- 自动选轴：第一个非数值列作 X，第一个数值列作 Y；
+- 图注区英文 + 中文，「一键复制」复制两段文本；
+- 首页增加「数据可视化 Copilot」入口。
+
+### 实测结果（`samples/transformer_bleu.csv`，9 行 × 5 列）
+
+- 列判定：model/task 为类别，bleu/train_hours/params_m 为数值；
+- 图注（DeepSeek 生成）：
+  > Figure 1. BLEU scores on the WMT14 EN-DE and EN-FR translation tasks for five model architectures, plotted against training time and parameter count. Transformer (big) attains the highest BLEU on both tasks (28.4 EN-DE, 41.0 EN-FR)...
+- 柱状图 canvas 高 404px 正常渲染；折线图、表格切换正常；复制按钮点击后显示「已复制 ✓」。
+
+截图存证：`.screenshots/p2-copilot/`。
+
 ## 2026-11-16 · P1-2 引用图谱与基石文献挖掘
 
 ### 后端
