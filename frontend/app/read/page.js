@@ -670,49 +670,55 @@ function ReadPageInner() {
   return (
     <main className="read-page">
       <header className="read-head">
-        <a className="secondary" href="/papers">
-          ← 论文库
-        </a>
-        <span className="read-title">双语联动阅读 · 论文 #{paperId}</span>
-        <div className="bulk-translate">
-          <button
-            className="secondary"
-            type="button"
-            onClick={translateAll}
-            disabled={Boolean(bulk?.running) || pageCount === 0}
-          >
-            {bulk?.running
-              ? `翻译中 ${bulk.done}/${bulk.total}`
-              : "整篇翻译"}
-          </button>
-          {bulk && !bulk.running ? (
-            <span className="bulk-status">
-              {bulk.failed > 0
-                ? `完成 ${bulk.total} 页，${bulk.failed} 页失败`
-                : `已完成 ${bulk.total} 页译文并缓存`}
-            </span>
-          ) : null}
-        </div>
-        <div className="page-nav">
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => setPageNum((n) => Math.max(1, n - 1))}
-            disabled={pageNum <= 1}
-          >
-            上一页
-          </button>
-          <span>
-            第 {pageNum} / {pageCount || "?"} 页
+        <div className="read-head-left">
+          <nav className="read-breadcrumb" aria-label="面包屑">
+            <a href="/papers">论文库</a>
+            <span aria-hidden="true">›</span>
+            <span>双语联动阅读</span>
+          </nav>
+          <span className="read-title" title={metaTitle?.content || "论文标题加载中"}>
+            {metaTitle?.content || "论文标题加载中…"}
           </span>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => setPageNum((n) => Math.min(pageCount || 1, n + 1))}
-            disabled={pageCount > 0 && pageNum >= pageCount}
-          >
-            下一页
-          </button>
+          <span className="read-page-count">第 {pageNum} / {pageCount || "?"} 页</span>
+        </div>
+        <div className="read-head-actions">
+          <div className="page-nav">
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => setPageNum((n) => Math.max(1, n - 1))}
+              disabled={pageNum <= 1}
+            >
+              上一页
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => setPageNum((n) => Math.min(pageCount || 1, n + 1))}
+              disabled={pageCount > 0 && pageNum >= pageCount}
+            >
+              下一页
+            </button>
+          </div>
+          <div className="bulk-translate">
+            <button
+              className="secondary"
+              type="button"
+              onClick={translateAll}
+              disabled={Boolean(bulk?.running) || pageCount === 0}
+            >
+              {bulk?.running
+                ? `翻译中 ${bulk.done}/${bulk.total}`
+                : "整篇翻译"}
+            </button>
+            {bulk && !bulk.running ? (
+              <span className="bulk-status">
+                {bulk.failed > 0
+                  ? `完成 ${bulk.total} 页，${bulk.failed} 页失败`
+                  : `已完成 ${bulk.total} 页译文并缓存`}
+              </span>
+            ) : null}
+          </div>
         </div>
       </header>
 

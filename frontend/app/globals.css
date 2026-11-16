@@ -1058,24 +1058,84 @@ button.danger:hover {
 }
 
 .read-head {
+  position: sticky;
+  top: 0;
+  z-index: 60;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: rgba(244, 247, 251, 0.96);
+  backdrop-filter: blur(10px);
 }
 
-.read-title { font-weight: 600; color: #2b3240; }
-
-.page-nav {
-  margin-left: auto;
+.read-head-left,
+.read-head-actions,
+.read-breadcrumb {
   display: flex;
   align-items: center;
+}
+
+.read-head-left {
+  flex: 1 1 auto;
+  gap: 14px;
+  min-width: 0;
+}
+
+.read-breadcrumb {
+  flex: 0 0 auto;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.read-breadcrumb a { color: var(--primary); }
+.read-breadcrumb a:hover { text-decoration: underline; }
+
+.read-title {
+  min-width: 0;
+  max-width: 460px;
+  overflow: hidden;
+  color: #172033;
+  font-size: 16px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.read-page-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.read-head-actions {
+  flex: 0 0 auto;
   gap: 10px;
+}
+
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   color: #4b5563;
+}
+
+.page-nav button,
+.bulk-translate button { white-space: nowrap; }
+
+@media (max-width: 767px) {
+  .read-head { flex-wrap: wrap; gap: 10px; }
+  .read-head-left { flex-basis: 100%; flex-wrap: wrap; gap: 8px 12px; }
+  .read-title { order: 3; flex-basis: 100%; max-width: 100%; }
+  .read-head-actions { width: 100%; justify-content: space-between; }
+  .bulk-status { display: none; }
 }
 
 .read-body {
@@ -1284,13 +1344,13 @@ button.danger:hover {
 .side-pane {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 150px);
+  height: calc(100vh - 175px);
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   position: sticky;
-  top: 16px;
+  top: 84px;
 }
 
 .tabs { display: flex; border-bottom: 1px solid var(--border); }
