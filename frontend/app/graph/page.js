@@ -23,8 +23,13 @@ function nodeDiameter(importance, isRoot) {
 
 function buildLayout(data) {
   const nodes = data.nodes || [];
-  const root = nodes.find((node) => node.kind === "root");
-  const refs = nodes.filter((node) => node.kind === "reference");
+  const root =
+    nodes.find((node) => node.kind === "root") ||
+    nodes.find((node) => String(node.id).startsWith("paper-"));
+  // 兜底：后端若没给 kind 字段，就按"除中心外的都是引用"处理，避免整页只剩一个节点
+  const refs = nodes.filter((node) =>
+    node.kind ? node.kind === "reference" : node !== root,
+  );
 
   // 以本论文为中心，被引文献按重要性从 12 点方向顺时针辐射
   const radius = Math.max(330, refs.length * 16);
@@ -128,6 +133,23 @@ function GraphInner() {
 
   const flow = useMemo(() => (data ? buildLayout(data) : { nodes: [], edges: [] }), [data]);
 
+  // 兜底：后端没返回 top5 时，用节点的 importance 现场排序，保证列表不为空
+  const top5 = useMemo(() => {
+    if (!data) return [];
+    if (data.top5?.length) return data.top5;
+    return (data.nodes || [])
+      .filter((node) => node.kind !== "root" && node.index)
+      .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
+      .slice(0, 5)
+      .map((node) => ({
+        index: node.index,
+        title: node.title,
+        year: node.year,
+        importance: node.importance,
+        reason: `重要性 ${node.importance}`,
+      }));
+  }, [data]);
+
   if (error) {
     return (
       <main className="container">
@@ -195,7 +217,7 @@ function GraphInner() {
           <section className="card compact-card">
             <h2>基石文献 Top5</h2>
             <ol className="corner-list">
-              {data.top5.map((item) => (
+              {top5.map((item) => (
                 <li key={item.index}>
                   <div className="corner-head">
                     <span className="corner-rank">[{item.index}]</span>
