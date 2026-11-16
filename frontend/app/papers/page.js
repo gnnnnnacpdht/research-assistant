@@ -294,6 +294,9 @@ export default function PapersPage() {
                       <a className="secondary read-link" href={`/read?paper_id=${paper.id}`}>
                         阅读
                       </a>
+                      <a className="secondary read-link" href={`/graph?paper_id=${paper.id}`}>
+                        图谱
+                      </a>
                       <button
                         className="danger"
                         type="button"

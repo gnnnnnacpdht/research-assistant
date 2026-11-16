@@ -303,6 +303,19 @@ def get_references(paper_id: int) -> dict:
     return {"paper_id": paper_id, **parse_references(pages)}
 
 
+@router.get("/{paper_id}/citations")
+def get_citations(paper_id: int) -> dict:
+    """返回以该论文为中心的引用图谱：节点、边、重要性分数与 Top5 基石文献。"""
+    from .. import citations
+
+    try:
+        return citations.build_citation_graph(paper_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/{paper_id}/index")
 def reindex_paper(paper_id: int) -> dict:
     """手动重建某篇论文的向量索引，用于索引失败后重试。"""

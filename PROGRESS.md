@@ -1,7 +1,56 @@
 # 当前进度快照
 
 更新时间：2026-11-16  
-当前阶段：P1-1 双语联动阅读与引用跳转已完成实测；P0 全部完成。
+当前阶段：P1-1 双语阅读、P1-2 引用图谱均已完成实测；P0 全部完成。
+
+## 2026-11-16 · P1-2 引用图谱与基石文献挖掘
+
+### 后端
+
+| 文件 | 内容 |
+|---|---|
+| `app/citations.py`（新增） | 参考文献结构化解析 → networkx 有向图 → PageRank → 加权 importance → Top5 基石文献 |
+| `app/routers/papers.py` | 新增 `GET /api/papers/{id}/citations` |
+| `pyproject.toml` | 依赖加入 `networkx` |
+
+**打分公式**（importance 0-100）：
+
+```
+importance = 100 × (0.35 × PageRank归一 + 0.15 × 正文提及占比 + 0.40 × 领域经典度 + 0.10 × 年份新鲜度)
+```
+
+- 边权 = 1 + 该编号在正文被提及次数，PageRank 因此能区分"作者反复引用的工作"；
+- 领域经典度关键词表覆盖 LSTM / Adam / ResNet / BatchNorm / Dropout / word2vec 等，
+  通用词 attention 权重压低（NMT 领域几乎人人提，区分度低）；
+- 年份新鲜度按最新年份线性衰减到 0（20 年窗口）。
+
+**条目解析**：先按 `作者. 标题. 出处, 年份` 正则切分；作者名含缩写（如 "Yann N. Dauphin"）
+或标题疑似作者列表时，改用候选段落打分（小写词多、不含 arXiv/年份者胜出）；
+最后修复 PDF 断词（`Convolu- tional` → `Convolutional`）。
+
+### 前端 `/graph?paper_id=X`
+
+- React Flow（`@xyflow/react`）渲染：中心节点是论文，被引文献按重要性排序沿圆环辐射；
+- 节点直径 30-88px 随 importance 变化，≥80 橙色、≥60 蓝色、其余灰色；
+- 悬停显示黑底提示（标题 + 年份 + 重要性），点击右侧展示作者/年份/页码/提及次数/原始条目；
+- 右侧「基石文献 Top5」列出分数与理由（正文提及次数、经典命中、发表年份）。
+
+### 实测结果（论文 #24 1706.03762v7.pdf）
+
+- 节点 41 个（1 中心 + 40 被引）、边 40 条，Top5：
+  [9] Convolutional sequence to sequence learning 87.0、
+  [21] Factorization tricks for LSTM networks 85.1、
+  [20] Adam 84.1、[11] Deep residual learning 83.4、[4] LSTM-networks 82.5
+- 点击 [20] 右侧显示 "Adam: A method for stochastic optimization / 2015 / 84.1"；
+- 悬停出现提示框。
+
+### 踩坑记录
+
+1. **引用节点不渲染**：后端节点缺 `kind` 字段，前端按 `kind==="reference"` 过滤为空；补字段后 41 节点正常。
+2. **重要性全部挤在 96-98 分**：初版只做 PageRank 归一，星型图各叶节点几乎相同；改为叠加提及占比与经典度后区分度恢复正常。
+3. **标题解析错位**：作者缩写（"Yann N."）被当作分隔符，导致标题只剩 "Dauphin"；加缩写识别 + 候选段落打分兜底。
+
+截图存证：`.screenshots/p1-graph/`。
 
 ## 2026-11-16 · P1-1 双语联动阅读与引用跳转
 

@@ -14,6 +14,8 @@ dependencies = [
     "httpx>=0.27.0,<1.0.0",
     # 读取项目根目录 .env 里的密钥
     "python-dotenv>=1.0.0,<2.0.0",
+    # 引用图谱：PageRank 等图算法
+    "networkx>=3.0,<4.0.0",
 ]
 
 [tool.uv]

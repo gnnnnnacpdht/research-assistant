@@ -504,6 +504,101 @@ button.danger:hover {
 
 .read-link:hover { background: #eef4ff; }
 
+/* ========== 引用图谱页 ========== */
+.graph-page {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+}
+
+.graph-stat { font-size: 13px; color: #64748b; margin-left: auto; }
+
+.graph-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .graph-body { grid-template-columns: 1fr; }
+}
+
+.graph-canvas {
+  position: relative;
+  height: calc(100vh - 170px);
+  min-height: 560px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.graph-tooltip {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 420px;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.graph-tooltip span { color: #cbd5e1; }
+
+.graph-side { display: flex; flex-direction: column; gap: 14px; }
+
+.compact-card { padding: 16px 18px; }
+.compact-card h2 { margin: 0 0 12px; font-size: 16px; }
+
+.corner-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.corner-list li {
+  border-left: 3px solid #f59e0b;
+  background: #fffbf2;
+  padding: 8px 12px;
+  border-radius: 0 8px 8px 0;
+}
+
+.corner-head { display: flex; justify-content: space-between; align-items: center; }
+
+.corner-rank { color: #b45309; font-weight: 600; font-size: 13px; }
+
+.corner-score {
+  font-size: 12px;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+
+.corner-title { margin: 4px 0 2px; font-size: 13px; color: #1f2937; line-height: 1.5; }
+
+.corner-reason { margin: 0; font-size: 12px; color: #78716c; }
+
+.node-detail { font-size: 13px; color: #334155; }
+
+.node-title { margin: 0 0 10px; font-weight: 600; line-height: 1.6; }
+
+.node-line { margin: 4px 0; display: flex; gap: 10px; }
+.node-line span:first-child { color: #94a3b8; min-width: 56px; }
+
+.node-raw {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.7;
+}
+
 /* ========== 双语阅读页 ========== */
 .read-page {
   max-width: 1500px;
