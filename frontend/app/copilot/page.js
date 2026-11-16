@@ -14,6 +14,8 @@ import {
 } from "chart.js";
 import { Bar, Line } from "react-chartjs-2";
 
+import { apiBaseUrl } from "../../lib/apiBase";
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -24,9 +26,6 @@ ChartJS.register(
   Tooltip,
   Legend,
 );
-
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 // 极简 CSV 解析：支持双引号包裹与转义，够覆盖常见导出文件
 function parseCsv(text) {

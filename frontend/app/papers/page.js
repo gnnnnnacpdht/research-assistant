@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+import { apiBaseUrl } from "../../lib/apiBase";
 
 function formatTime(value) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });

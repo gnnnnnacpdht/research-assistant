@@ -4,11 +4,10 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import * as pdfjsLib from "pdfjs-dist";
 
+import { apiBaseUrl } from "../../lib/apiBase";
+
 // worker 文件由构建时复制到 public/，避免从 CDN 拉取（内网/演示环境更稳）
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 const CITATION_RE = /\[(\d{1,3})\]/g;
 

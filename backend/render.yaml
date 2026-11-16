@@ -1,0 +1,22 @@
+# Render 蓝图：在 Render 控制台选择 "New + → Blueprint"，指向本仓库即可一键创建后端服务。
+# 密钥类环境变量没有写值，需要在 Render 后台手动填写（sync: false）。
+services:
+  - type: web
+    name: research-assistant-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: SILICONFLOW_API_KEY
+        sync: false
+      - key: MULTIMODAL_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false

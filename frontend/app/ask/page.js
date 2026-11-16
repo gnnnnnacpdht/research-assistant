@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+import { apiBaseUrl } from "../../lib/apiBase";
 
 // 答案里的页码引用标记，例如 [第7页]；捕获组保留分隔符，便于原样切分渲染。
 const PAGE_MARK = /(\[第\d+页\])/g;

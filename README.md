@@ -1,6 +1,42 @@
 # 科研助手
 
-全国高校 AI 大模型挑战赛参赛项目。当前为最小可运行骨架：Next.js 14 前端、FastAPI 后端及后端健康检查接口。
+全国高校 AI 大模型挑战赛参赛项目：Next.js 14 前端 + FastAPI 后端，支持 PDF 解析入库、扫描件 OCR、
+抗幻觉 RAG 问答（带页码溯源）、语义去重与版本对比、双语联动阅读、引用图谱与 CSV 可视化。
+
+## 公网访问
+
+| 项 | 地址 |
+|---|---|
+| 前端（Vercel） | 待部署后填写：`https://<your-app>.vercel.app` |
+| 后端 API（Render） | 待部署后填写：`https://<your-service>.onrender.com` |
+| 接口文档 | `<后端地址>/docs` |
+
+**测试账号**：当前系统无登录校验，评审直接访问前端地址即可使用。
+若后续接入登录，统一使用演示账号 `demo / 123456`。
+
+> Render 免费实例闲置一段时间会休眠，首次访问需等待约 30 秒冷启动。
+> 免费版磁盘在重新部署/休眠回收后会重置，**评审测试时请重新上传 PDF**
+> （官方用例文件在仓库 `pdf/` 目录）。
+
+## 环境变量清单（不含密钥值）
+
+后端（Render 后台配置）：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | 是 | DeepSeek 文本模型密钥（问答/翻译/图注/版本对比） |
+| `SILICONFLOW_API_KEY` | 是 | BGE-M3 向量化与 bge-reranker 重排 |
+| `MULTIMODAL_API_KEY` | 否 | 扫描件 OCR 的多模态密钥，留空则复用 `SILICONFLOW_API_KEY` |
+| `FRONTEND_ORIGINS` | 是 | 允许跨域的前端地址，多个用英文逗号分隔 |
+| `FRONTEND_ORIGIN_REGEX` | 否 | 默认已放行 `https://*.vercel.app` |
+| `DEEPSEEK_BASE_URL` / `SILICONFLOW_BASE_URL` | 否 | 自定义网关时填写 |
+| `VISION_MODEL` | 否 | 默认 `Qwen/Qwen3-VL-32B-Instruct` |
+
+前端（Vercel 后台配置）：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | 是 | Render 后端地址，例如 `https://xxx.onrender.com`；也兼容 `NEXT_PUBLIC_API_BASE` |
 
 ## 目录结构
 

@@ -11,8 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+import { apiBaseUrl } from "../../lib/apiBase";
 
 // 节点半径：importance 越高越大，但限制在可读范围内
 function nodeDiameter(importance, isRoot) {
