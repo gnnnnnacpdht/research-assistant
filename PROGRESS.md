@@ -12,6 +12,7 @@
 - 阶段一 1.5 完成：以 375px 宽同源 iframe 逐页实测首页、论文库、阅读页、问答、图谱与 Copilot，六页均折叠导航且无页面级横向溢出；修复窄屏阅读页网格最小宽度导致 PDF 画布撑破页面的问题，改为网格可收缩、PDF 区域内部横向滚动，生产构建通过。
 - 阶段二完成：六页回归无白屏或错误横幅，优化器问答正确返回 Adam 及第 7 页双引用；README 补齐公网入口、六大模块、环境变量与启动指南，确认 Git 仅跟踪 .env.example。阶段一二完成，剩余：审阅技术文档、录演示视频。
 - 阶段三完成：docs/技术文档.md 已含目录、七章、Mermaid 架构图和 13 张验证截图引用；官方用例、OCR、541 页与 RAG 数据均按 Git/实测记录写明。旧版首屏毫秒耗时未留档，文档如实说明并给出同条件补测方法，未虚构对比数字。技术文档初稿完成，待人工审阅后转 PDF；剩余：录演示视频。
+- 阶段三推送阻塞（已停止重试）：连续三次 `git push origin main` 失败，报错原文依次为 `fatal: unable to access 'https://github.com/gnnnnnacpdht/research-assistant.git/': Recv failure: Connection was reset`、`fatal: unable to access 'https://github.com/gnnnnnacpdht/research-assistant.git/': Failed to connect to github.com port 443 after 21087 ms: Could not connect to server`、`fatal: unable to access 'https://github.com/gnnnnnacpdht/research-assistant.git/': Recv failure: Connection was reset`。网络诊断显示 DNS 解析与 Ping 正常，但 `Test-NetConnection github.com -Port 443` 返回 `TcpTestSucceeded: False`，判断为当前网络到 GitHub HTTPS 连接受阻，并非文档或 Git 提交错误。技术文档已完整保存在本地 commit `06f59d1`，记录本阻塞前工作区干净；建议明早网络恢复后执行 `git push origin main`，不要重复修改文档或密钥。
 
 ## 2026-11-17 · 阅读页增强 + 图谱视觉重构
 
