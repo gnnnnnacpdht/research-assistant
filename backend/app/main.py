@@ -4,9 +4,11 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import db, rag
 from .routers import ask, csv_view, papers, translate
@@ -56,3 +58,21 @@ app.include_router(csv_view.router)
 def health_check() -> dict[str, str]:
     """供前端和部署平台确认后端进程可用。"""
     return {"status": "ok", "service": "research-assistant-backend"}
+
+
+# ---------------------------------------------------------------- 前端静态托管
+# 部署形态：frontend 用 `next build`（output: "export"）导出纯静态文件到 frontend/out，
+# 由本服务在根路径托管，一个容器一个端口同时提供页面与 /api，因此无需任何跨域配置。
+# 该挂载必须放在所有 API 路由之后，否则 "/" 会抢占 /api/* 的匹配。
+logger = logging.getLogger("uvicorn.error")
+FRONTEND_DIST = Path(
+    os.getenv("FRONTEND_DIST", Path(__file__).resolve().parent.parent.parent / "frontend" / "out")
+)
+if FRONTEND_DIST.is_dir():
+    # html=True：请求目录时自动返回 index.html，并把 /read 301 到 /read/
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+    logger.info("已挂载前端静态文件：%s", FRONTEND_DIST)
+else:
+    # 本地开发时前端跑在 3000 端口，没有 out/ 目录属于正常情况
+    logger.warning("未找到前端静态目录 %s，仅提供 API（本地开发请单独启动 pnpm dev）", FRONTEND_DIST)
+

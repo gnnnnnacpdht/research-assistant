@@ -1,3 +1,13 @@
+---
+title: 科研助手 Research Assistant
+emoji: 📚
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 科研助手
 
 全国高校 AI 大模型挑战赛参赛项目：Next.js 14 前端 + FastAPI 后端，支持 PDF 解析入库、扫描件 OCR、
@@ -7,36 +17,71 @@
 
 | 项 | 地址 |
 |---|---|
-| 前端（Vercel） | 待部署后填写：`https://<your-app>.vercel.app` |
-| 后端 API（Render） | 待部署后填写：`https://<your-service>.onrender.com` |
-| 接口文档 | `<后端地址>/docs` |
+| 在线系统（Hugging Face Space） | 待部署后填写：`https://<用户名>-<空间名>.hf.space` |
+| 接口文档 | `<公网地址>/docs` |
+| 健康检查 | `<公网地址>/api/health` |
 
-**测试账号**：当前系统无登录校验，评审直接访问前端地址即可使用。
+**测试账号**：当前系统无登录校验，评审直接访问公网地址即可使用。
 若后续接入登录，统一使用演示账号 `demo / 123456`。
 
-> Render 免费实例闲置一段时间会休眠，首次访问需等待约 30 秒冷启动。
-> 免费版磁盘在重新部署/休眠回收后会重置，**评审测试时请重新上传 PDF**
+> Space 免费实例闲置一段时间会休眠，首次访问需等待约 30 秒冷启动；
+> 免费实例的磁盘在重新构建/重启后会重置，**评审测试时请重新上传 PDF**
 > （官方用例文件在仓库 `pdf/` 目录）。
+
+## 部署方式：单容器同域（Hugging Face Spaces）
+
+前后端合并成**一个 Docker 容器、一个端口 7860**，不依赖 Render/Vercel：
+
+1. 前端 `next.config.js` 设置 `output: "export"`，构建期导出纯静态文件到 `out/`；
+   所有页面均为客户端渲染，`/read?paper_id=24` 这类 query 参数路由照常可用。
+2. 前端请求统一走**相对路径** `/api`（`lib/apiBase.js`），同域无需任何跨域配置。
+3. 后端 `app/main.py` 在全部 API 路由之后用 `StaticFiles` 把 `frontend/out` 挂到根路径，
+   页面与接口因此共用 `https://<用户名>-<空间名>.hf.space`。
+4. 根目录 `Dockerfile` 两阶段构建：Node 阶段导出前端 → Python 阶段装依赖并运行 uvicorn。
+
+### 在 Hugging Face 上创建 Space
+
+1. 注册/登录 <https://huggingface.co>，New → Space，SDK 选择 **Docker**，模板选 Blank。
+2. 在 Space 的 **Settings → Variables and secrets** 添加 Secret：
+   `DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`（`MULTIMODAL_API_KEY` 可选，留空复用前者）。
+3. 把本仓库推送到 Space 仓库（Space 的 README 首部必须保留上面的 `sdk: docker` 配置）：
+
+   ```powershell
+   git remote add hf https://huggingface.co/spaces/<用户名>/<空间名>
+   git push hf main
+   ```
+
+4. 等待 Building → Running，访问 `https://<用户名>-<空间名>.hf.space`。
+
+### 本地验证同域形态（不装 Docker 也能验证）
+
+```powershell
+Set-Location d:\keijizhushou\frontend
+pnpm build            # 生成 out/ 静态站点
+Set-Location d:\keijizhushou\backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+浏览器打开 <http://127.0.0.1:8000> 即前后端合体后的效果（`/docs` 仍是接口文档）。
 
 ## 环境变量清单（不含密钥值）
 
-后端（Render 后台配置）：
+容器/Space（Settings → Variables and secrets，均选 Secret 类型）：
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 是 | DeepSeek 文本模型密钥（问答/翻译/图注/版本对比） |
 | `SILICONFLOW_API_KEY` | 是 | BGE-M3 向量化与 bge-reranker 重排 |
 | `MULTIMODAL_API_KEY` | 否 | 扫描件 OCR 的多模态密钥，留空则复用 `SILICONFLOW_API_KEY` |
-| `FRONTEND_ORIGINS` | 是 | 允许跨域的前端地址，多个用英文逗号分隔 |
-| `FRONTEND_ORIGIN_REGEX` | 否 | 默认已放行 `https://*.vercel.app` |
 | `DEEPSEEK_BASE_URL` / `SILICONFLOW_BASE_URL` | 否 | 自定义网关时填写 |
 | `VISION_MODEL` | 否 | 默认 `Qwen/Qwen3-VL-32B-Instruct` |
+| `FRONTEND_ORIGINS` | 否 | 仅在前后端分离部署时需要；同域部署留空即可 |
 
-前端（Vercel 后台配置）：
+前端构建期变量（同域部署**不要**设置）：
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | 是 | Render 后端地址，例如 `https://xxx.onrender.com`；也兼容 `NEXT_PUBLIC_API_BASE` |
+| `NEXT_PUBLIC_API_BASE_URL` | 否 | 只有前后端分域时才需要，填后端绝对地址；留空即走相对路径 `/api` |
 
 ## 目录结构
 
