@@ -38,20 +38,33 @@ def get_collection() -> chromadb.api.models.Collection.Collection:
 
 
 def chunk_text(text: str) -> list[str]:
-    """把一页文本切成约 500 字符、相邻重叠 80 字符的片段。"""
+    """把一页文本切成约 500 字符的片段，相邻重叠 80 字符，并尽量在句子边界断开。
+
+    为什么要在句子边界切：硬切曾把 "We used the Adam optimizer ..." 从中间截断，
+    前半块被训练时长等内容稀释、后半块不再含 Adam 字样，导致优化器段落检索不到。
+    """
     # PDF 抽出的一行一个换行，会稀释语义，先压成连续文本。
     normalized = " ".join(text.split())
     if len(normalized) <= config.CHUNK_SIZE:
         return [normalized] if normalized else []
 
-    step = config.CHUNK_SIZE - config.CHUNK_OVERLAP
     chunks: list[str] = []
-    for start in range(0, len(normalized), step):
-        chunk = normalized[start : start + config.CHUNK_SIZE]
+    start = 0
+    while start < len(normalized):
+        end = min(start + config.CHUNK_SIZE, len(normalized))
+        if end < len(normalized):
+            # 在窗口后半段找句子结束符；找不到才退回硬切，避免出现过短的块。
+            window = normalized[start:end]
+            boundary = max(window.rfind(mark) for mark in (". ", "? ", "! ", "; "))
+            if boundary >= config.CHUNK_SIZE // 2:
+                end = start + boundary + 1
+        chunk = normalized[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        if start + config.CHUNK_SIZE >= len(normalized):
+        if end >= len(normalized):
             break
+        # 重叠回退，保证跨块的句子在两块里都有完整上下文。
+        start = max(end - config.CHUNK_OVERLAP, start + 1)
     return chunks
 
 
@@ -168,8 +181,13 @@ def _search_query(question: str) -> str:
     return rewritten.strip().strip('"“”').splitlines()[0][:300] or question
 
 
-def _retrieve(question: str) -> list[dict]:
-    """向量召回 top5，返回片段及其元数据（同一页码只保留最相关的一块）。"""
+def _retrieve(question: str, paper_id: int | None = None, top_k: int | None = None) -> list[dict]:
+    """向量召回，返回片段及其元数据（同一页码只保留最相关的一块）。
+
+    paper_id 不为空时只在该论文内检索：多文档场景下"这篇论文"类指代
+    必须靠过滤落到具体文档，否则大文档会凭片段数量淹没小论文。
+    top_k 供重试时扩大召回范围使用，默认取配置值。
+    """
     collection = get_collection()
     if collection.count() == 0:
         return []
@@ -177,7 +195,8 @@ def _retrieve(question: str) -> list[dict]:
     query_vector = llm_client.embed_texts([question])[0]
     result = collection.query(
         query_embeddings=[query_vector],
-        n_results=config.RETRIEVE_TOP_K,
+        n_results=top_k or config.RETRIEVE_TOP_K,
+        where={"paper_id": paper_id} if paper_id else None,
         include=["documents", "metadatas", "distances"],
     )
 

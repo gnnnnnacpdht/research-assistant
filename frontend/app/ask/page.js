@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
 
@@ -39,11 +39,61 @@ function AnswerBody({ answer, onCiteClick }) {
   );
 }
 
+// 轨迹面板里的阶段中文名；后端 stage 字段保持英文，便于日志检索。
+const STAGE_NAMES = {
+  retrieve: "向量检索",
+  rerank: "重排精筛",
+  generate: "生成答案",
+  verify: "引用自检",
+};
+
+// 可折叠的 Agent 推理轨迹：展示每个阶段的状态、耗时与自检结论。
+function AgentTrace({ trajectory }) {
+  if (!trajectory || trajectory.length === 0) {
+    return null;
+  }
+  const retries = Math.max(...trajectory.map((item) => item.attempt ?? 1)) - 1;
+  const totalMs = trajectory.reduce((sum, item) => sum + (item.duration_ms ?? 0), 0);
+  const lastVerify = [...trajectory].reverse().find((item) => item.stage === "verify");
+
+  return (
+    <details className="trace-panel" open>
+      <summary>
+        Agent 推理轨迹 · 总耗时 {(totalMs / 1000).toFixed(1)} 秒 · 重新检索 {retries} 次
+        {lastVerify ? ` · ${lastVerify.detail}` : ""}
+      </summary>
+      <ol className="trace-list">
+        {trajectory.map((item, index) => (
+          <li key={index} className={`trace-item trace-${item.status}`}>
+            <span className="trace-stage">
+              {STAGE_NAMES[item.stage] ?? item.stage}
+              {(item.attempt ?? 1) > 1 ? `（第${item.attempt}轮）` : ""}
+            </span>
+            <span className="trace-detail">{item.detail}</span>
+            <span className="trace-time">{item.duration_ms} ms</span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 export default function AskPage() {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState([]);
+  const [trajectory, setTrajectory] = useState([]);
+  // 论文范围：空串表示全库检索，否则只在该论文内检索（避免大文档淹没小论文）。
+  const [papers, setPapers] = useState([]);
+  const [paperId, setPaperId] = useState("");
+
+  useEffect(() => {
+    fetch(`${apiBaseUrl}/api/papers`)
+      .then((response) => response.json())
+      .then((data) => setPapers(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
   const [error, setError] = useState("");
   // 点击页码徽章时保存页码，非空即弹出原文片段浮层。
   const [activePage, setActivePage] = useState(null);
@@ -60,12 +110,16 @@ export default function AskPage() {
     setError("");
     setAnswer("");
     setSources([]);
+    setTrajectory([]);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed }),
+        body: JSON.stringify({
+          question: trimmed,
+          paper_id: paperId ? Number(paperId) : null,
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -73,6 +127,7 @@ export default function AskPage() {
       }
       setAnswer(data.answer ?? "");
       setSources(data.sources ?? []);
+      setTrajectory(data.trajectory ?? []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -101,6 +156,19 @@ export default function AskPage() {
       <section className="card">
         <h2>提问</h2>
         <form className="ask-form" onSubmit={handleAsk}>
+          <select
+            className="paper-select"
+            value={paperId}
+            onChange={(event) => setPaperId(event.target.value)}
+            aria-label="选择检索范围"
+          >
+            <option value="">全部论文</option>
+            {papers.map((paper) => (
+              <option key={paper.id} value={paper.id}>
+                {paper.filename}（{paper.page_count}页）
+              </option>
+            ))}
+          </select>
           <textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
@@ -130,6 +198,7 @@ export default function AskPage() {
       {answer ? (
         <section className="card">
           <h2>回答</h2>
+          <AgentTrace trajectory={trajectory} />
           <AnswerBody answer={answer} onCiteClick={setActivePage} />
           <p className="message">
             以上结论均来自下方检索到的原文片段，点击页码徽章可核对。

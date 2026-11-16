@@ -329,6 +329,75 @@ tbody tr:last-child td {
   word-break: break-word;
 }
 
+/* Agent 推理轨迹面板 */
+.paper-select {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: white;
+  font-size: 14px;
+}
+
+.trace-panel {
+  margin: 0 0 18px;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  background: #f8faff;
+  padding: 10px 14px;
+}
+
+.trace-panel summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  line-height: 1.7;
+}
+
+.trace-list {
+  list-style: none;
+  margin: 12px 0 2px;
+  padding: 0;
+}
+
+.trace-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0 7px 12px;
+  border-left: 3px solid var(--primary);
+  font-size: 13px;
+}
+
+.trace-item + .trace-item {
+  border-top: 1px dashed #e3e8f0;
+}
+
+.trace-item.trace-retry {
+  border-left-color: #d97706;
+}
+
+.trace-stage {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.trace-detail {
+  flex: 1;
+  min-width: 220px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.trace-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .modal-mask {
   position: fixed;
   inset: 0;
