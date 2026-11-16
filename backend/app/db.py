@@ -110,10 +110,10 @@ def list_papers() -> list[dict]:
 
 
 def get_paper(paper_id: int) -> dict | None:
-    """按 id 取单篇论文元数据，供向量库写入片段时带上文件名。"""
+    """按 id 取单篇论文元数据；带上 stored_path 供 PDF 原文件下载接口使用。"""
     with _connect() as connection:
         row = connection.execute(
-            "SELECT id, filename, page_count, uploaded_at FROM papers WHERE id = ?",
+            "SELECT id, filename, stored_path, page_count, uploaded_at FROM papers WHERE id = ?",
             (paper_id,),
         ).fetchone()
     return dict(row) if row else None

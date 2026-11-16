@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import db, rag
-from .routers import ask, papers
+from .routers import ask, papers, translate
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,6 +44,7 @@ db.init_db()
 
 app.include_router(papers.router)
 app.include_router(ask.router)
+app.include_router(translate.router)
 
 
 @app.get("/api/health", tags=["系统"])

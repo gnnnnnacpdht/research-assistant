@@ -291,6 +291,9 @@ export default function PapersPage() {
                     <td>{paper.page_count}</td>
                     <td>{formatTime(paper.uploaded_at)}</td>
                     <td>
+                      <a className="secondary read-link" href={`/read?paper_id=${paper.id}`}>
+                        阅读
+                      </a>
                       <button
                         className="danger"
                         type="button"

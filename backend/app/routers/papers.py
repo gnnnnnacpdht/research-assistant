@@ -1,11 +1,12 @@
 """论文接口：PDF 上传解析入库、去重确认、版本对比、论文列表查询、向量索引重建。"""
 
 import os
+import re
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Body, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .. import db, dedupe, rag
 from ..pdf_parser import extract_pages
@@ -13,6 +14,67 @@ from ..pdf_parser import extract_pages
 router = APIRouter(prefix="/api/papers", tags=["论文"])
 
 MAX_PDF_BYTES = 100 * 1024 * 1024  # 单文件上限 100MB，防止误传超大文件占满磁盘
+
+CITATION_RE = re.compile(r"\[(\d{1,3})\]")
+
+
+def parse_references(pages: list[tuple[int, str]]) -> dict:
+    """从分页文本里解析参考文献条目与正文首现页码。
+
+    Returns:
+        entries: [{index, page, text}]，按 [n] 切分出的条目
+        first_pages: {编号: 正文首次出现页码}
+        reference_page: References 标题所在页码
+    """
+    start = None
+    for position, (_, text) in enumerate(pages):
+        if re.search(r"(?m)^\s*References\s*$", text):
+            # 取最后一次出现：正文里出现 "References" 字样（如表格列名）不算参考文献区
+            start = position
+
+    entries: list[dict] = []
+    if start is not None:
+        # 拼接 References 及之后的所有页面，并记录每段文本对应的页码
+        spans: list[tuple[int, int, int]] = []
+        pieces: list[str] = []
+        cursor = 0
+        for number, text in pages[start:]:
+            piece = text + "\n"
+            spans.append((cursor, cursor + len(piece), number))
+            pieces.append(piece)
+            cursor += len(piece)
+        joined = "".join(pieces)
+
+        matches = list(CITATION_RE.finditer(joined))
+        for position, match in enumerate(matches):
+            end = matches[position + 1].start() if position + 1 < len(matches) else len(joined)
+            body = re.sub(r"\s+", " ", joined[match.end():end]).strip()
+            if len(body) < 10:
+                continue  # 跳过 "[2]" 这种孤立的编号残片
+            page = next(p for begin, finish, p in spans if begin <= match.start() < finish)
+            entries.append({"index": int(match.group(1)), "page": page, "text": body[:600]})
+
+        # 同一编号可能重复出现（跨页被切断），保留文本最长的一条，并按编号排序
+        unique: dict[int, dict] = {}
+        for entry in entries:
+            kept = unique.get(entry["index"])
+            if kept is None or len(entry["text"]) > len(kept["text"]):
+                unique[entry["index"]] = entry
+        entries = [unique[key] for key in sorted(unique)]
+
+    # 正文首现页：只看 References 之前的部分
+    body_pages = pages[:start] if start is not None else pages
+    first_pages: dict[int, int] = {}
+    for number, text in body_pages:
+        for match in CITATION_RE.finditer(text):
+            index = int(match.group(1))
+            first_pages.setdefault(index, number)
+
+    return {
+        "entries": entries,
+        "first_pages": {str(key): value for key, value in sorted(first_pages.items())},
+        "reference_page": pages[start][0] if start is not None else None,
+    }
 
 
 def _do_save_and_index(
@@ -189,6 +251,56 @@ def cancel_pending(payload: dict) -> dict:
 def get_papers() -> list[dict]:
     """返回论文列表（id、文件名、页数、上传时间），按最新上传在前排序。"""
     return db.list_papers()
+
+
+@router.get("/{paper_id}/file", response_class=FileResponse)
+def get_paper_file(paper_id: int):
+    """把原始 PDF 交给前端 pdf.js 渲染。
+
+    注意不要写 `-> FileResponse` 返回注解：FastAPI 会把它当成 pydantic 响应模型，
+    直接报 500。用 response_class 声明即可。
+    """
+    paper = db.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    path = Path(paper["stored_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="原始 PDF 文件已丢失")
+    return FileResponse(path, media_type="application/pdf", filename=paper["filename"])
+
+
+@router.get("/{paper_id}/page/{page_num}")
+def get_paper_page(paper_id: int, page_num: int) -> dict:
+    """返回某页的提取文本，阅读页右侧翻译与引用跳转都依赖它。"""
+    paper = db.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+
+    for number, text in db.get_pages(paper_id):
+        if number == page_num:
+            return {
+                "paper_id": paper_id,
+                "filename": paper["filename"],
+                "page": number,
+                "page_count": paper["page_count"],
+                "text": text,
+            }
+    raise HTTPException(status_code=404, detail=f"第 {page_num} 页不存在")
+
+
+@router.get("/{paper_id}/references")
+def get_references(paper_id: int) -> dict:
+    """解析参考文献条目，供正文 [n] 与文献列表双向跳转。
+
+    末尾的 References 段落用正则按 [n] 切分；同时记录每个编号在正文里首次出现的页码，
+    这样点文献条目能跳回正文。
+    """
+    paper = db.get_paper(paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="论文不存在")
+
+    pages = db.get_pages(paper_id)
+    return {"paper_id": paper_id, **parse_references(pages)}
 
 
 @router.post("/{paper_id}/index")

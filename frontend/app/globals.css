@@ -490,3 +490,238 @@ button.danger:hover {
   font-weight: 600;
 }
 
+/* 论文库列表里的「阅读」入口：与删除按钮并排 */
+.read-link {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 6px 14px;
+  border: 1px solid #c7d7fe;
+  border-radius: 6px;
+  color: #1d4ed8;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.read-link:hover { background: #eef4ff; }
+
+/* ========== 双语阅读页 ========== */
+.read-page {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+}
+
+.read-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.read-title { font-weight: 600; color: #2b3240; }
+
+.page-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #4b5563;
+}
+
+.read-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .read-body { grid-template-columns: 1fr; }
+}
+
+.pdf-pane {
+  background: #eef1f5;
+  border-radius: 10px;
+  padding: 16px;
+  min-height: 400px;
+}
+
+.pdf-canvas-wrap {
+  position: relative;
+  width: fit-content;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+}
+
+.pdf-canvas-wrap canvas { display: block; }
+
+/* 文本层必须浮在 canvas 上，才能用鼠标选中文字 */
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.pdf-text-layer span::selection { background: rgba(59, 130, 246, 0.35); }
+
+.pdf-tip {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.side-pane {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: sticky;
+  top: 16px;
+}
+
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+
+.tab {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: #f8fafc;
+  font-size: 14px;
+  cursor: pointer;
+  color: #64748b;
+}
+
+.tab.active {
+  background: #fff;
+  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 #2563eb;
+}
+
+.pane-content {
+  padding: 16px 18px 22px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+}
+
+.pane-title { margin: 4px 0 12px; font-size: 15px; color: #334155; }
+
+.translation-text {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #1f2937;
+  white-space: pre-wrap;
+}
+
+.citation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+
+.citation-label { font-size: 12px; color: #6b7280; }
+
+.cite-chip {
+  border: 1px solid #c7d7fe;
+  background: #eef4ff;
+  color: #1d4ed8;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cite-chip:hover { background: #dbe7ff; }
+.cite-chip.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+.selection-card {
+  border: 1px solid #c7d7fe;
+  background: #f5f8ff;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.selection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #1d4ed8;
+  margin-bottom: 8px;
+}
+
+.selection-source {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+.selection-target {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #111827;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.ref-list { list-style: none; margin: 0; padding: 0; }
+
+.ref-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  margin-bottom: 8px;
+  background: #fbfcfe;
+}
+
+.ref-item.active { background: #eef4ff; border-left-color: #2563eb; }
+
+.ref-text { font-size: 13px; line-height: 1.7; color: #374151; }
+
+.ref-index { color: #1d4ed8; font-weight: 600; }
+
+.ref-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.float-translate {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 200;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: none;
+  background: #111827;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+

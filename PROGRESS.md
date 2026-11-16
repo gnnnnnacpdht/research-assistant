@@ -1,7 +1,53 @@
 # 当前进度快照
 
 更新时间：2026-11-16  
-当前阶段：**P0 全部完成**（上传解析、扫描件 OCR、抗幻觉 RAG、论文删除、语义去重 + 版本对比），进入 P1 前的收尾验证。
+当前阶段：P1-1 双语联动阅读与引用跳转已完成实测；P0 全部完成。
+
+## 2026-11-16 · P1-1 双语联动阅读与引用跳转
+
+### 后端新增
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/papers/{id}/file` | 返回原始 PDF，供前端 pdf.js 渲染 |
+| `GET /api/papers/{id}/page/{n}` | 返回该页提取文本与总页数 |
+| `GET /api/papers/{id}/references` | 解析参考文献条目 + 每个编号在正文的首现页码 |
+| `POST /api/translate` | 英文学术文本 → 中文，进程内 LRU 缓存（512 条，命中直接返回 `cached: true`） |
+| `GET /api/translate/cache-stats` | 缓存命中情况，便于演示"省钱" |
+
+参考文献解析：取**最后一次**出现的 `References` 标题行作为起点（避开正文/表格里的同名字样），
+从该页起按 `[n]` 切分条目，同编号保留文本最长的一条并按编号排序。
+
+### 前端新页面 `/read?paper_id=X`
+
+- 左侧 pdf.js 渲染原版页面：canvas 画图 + 手写文本层（`page.getTextContent()` 逐片段绝对定位、
+  按 PDF 实际宽度横向 scaleX），因此可以鼠标拖选。
+- 右侧两个标签页：中文翻译（整页）与参考文献（40 条，可滚动）。
+- 划词翻译：选中英文 → 选区上方浮出「翻译」按钮 → 调 `/api/translate` → 结果显示在右栏卡片。
+- 引用双向跳转：正文页提炼出「本页引用 [1] [2] …」徽章，点 [n] 切到参考文献并滚动高亮；
+  文献条目点「↑ 跳到正文 P.x」回到该编号首次出现的页面。
+- 论文库每行新增「阅读」入口。
+
+### 实测结果
+
+| 项 | 结果 |
+|---|---|
+| 首屏左侧 PDF | canvas 1239×1603，第 1/15 页正常渲染 |
+| 右侧整页译文 | 正常，含标题、作者、摘要中文 |
+| 划词翻译 | 选中 "Provided proper attribution is provided, Google hereby grants permission to" → 译文正确 |
+| 引用跳转 | 正文 [3] → 参考文献 [3] 高亮；文献条目 → 回正文 P.4 |
+| 翻译缓存 | 第二次相同文本 `cached: true` |
+
+### 踩坑记录
+
+1. **pdfjs-dist 6.x 依赖新版 Chrome**：报 `getOrInsertComputed is not a function`，降级到 4.10.38 解决。
+2. **降级后报 API/Worker 版本不匹配**：Next dev 缓存了旧 vendor chunk，删除 `.next` 重启即可。
+3. **`-> FileResponse` 返回注解会 500**：FastAPI 会当成 pydantic 响应模型，改用 `response_class=FileResponse`。
+4. **`db.get_paper` 未返回 `stored_path`**：补上该字段，PDF 下载接口才能取到文件路径。
+5. **首屏空白需刷新**：dev 模式 StrictMode 重挂载导致渲染 effect 在文档销毁后不再触发，
+   改为依赖 `docReady` 计数修复。
+
+截图存证：`.screenshots/p1-read/`。
 
 ## 2026-11-16 · 收尾：官方顺序二次实测（截图留证）
 
