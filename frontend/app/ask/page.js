@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
 
-// 答案里的页码引用标记，例如 [第7页]；捕获组保留分隔符，便于原样切分渲染。
-const PAGE_MARK = /(\[第\d+页\])/g;
+// 支持单篇 [第7页] 与跨论文 [论文2 第7页] 两种引用标记。
+const PAGE_MARK = /(\[论文\d+\s*第\d+页\]|\[第\d+页\])/g;
 
 const EXAMPLES = [
   "这篇论文使用的优化器是什么",
@@ -13,30 +13,45 @@ const EXAMPLES = [
   "Self-attention 有什么优点",
 ];
 
-// 把答案文本里的 [第X页] 渲染成可点击徽章，其余文本原样输出。
-function AnswerBody({ answer, onCiteClick }) {
-  return (
-    <p className="answer-text">
-      {answer.split(PAGE_MARK).map((part, index) => {
-        const match = part.match(/^\[第(\d+)页\]$/);
-        if (!match) {
-          return <span key={index}>{part}</span>;
-        }
-        const page = Number(match[1]);
-        return (
-          <button
-            key={index}
-            type="button"
-            className="cite-badge"
-            onClick={() => onCiteClick(page)}
-            title={`查看第${page}页原文片段`}
-          >
-            第{page}页
-          </button>
-        );
-      })}
-    </p>
-  );
+// 把两种引用标记渲染成可点击徽章，其余文本原样输出。
+function renderCitations(text, onCiteClick) {
+  return text.split(PAGE_MARK).map((part, index) => {
+    const match = part.match(/^\[(?:论文(\d+)\s*)?第(\d+)页\]$/);
+    if (!match) {
+      return <span key={index}>{part}</span>;
+    }
+    const paperIndex = match[1] ? Number(match[1]) : null;
+    const page = Number(match[2]);
+    const label = paperIndex ? `论文${paperIndex} · 第${page}页` : `第${page}页`;
+    return (
+      <button
+        key={index}
+        type="button"
+        className="cite-badge"
+        onClick={() => onCiteClick(page, paperIndex)}
+        title={`查看${label}原文片段`}
+      >
+        {label}
+      </button>
+    );
+  });
+}
+
+function AnswerBody({ answer, mode, onCiteClick }) {
+  // 对比答案按行拆成独立卡片，避免多篇论文的长段落混在一起。
+  if (mode === "compare") {
+    const items = answer.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+    return (
+      <div className="compare-list">
+        {items.map((item, index) => (
+          <p key={index} className="compare-item">
+            {renderCitations(item, onCiteClick)}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return <p className="answer-text">{renderCitations(answer, onCiteClick)}</p>;
 }
 
 // 轨迹面板里的阶段中文名；后端 stage 字段保持英文，便于日志检索。
@@ -84,6 +99,7 @@ export default function AskPage() {
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState([]);
   const [trajectory, setTrajectory] = useState([]);
+  const [mode, setMode] = useState("single");
   // 论文范围：空串表示全库检索，否则只在该论文内检索（避免大文档淹没小论文）。
   const [papers, setPapers] = useState([]);
   const [paperId, setPaperId] = useState("");
@@ -95,8 +111,8 @@ export default function AskPage() {
       .catch(() => {});
   }, []);
   const [error, setError] = useState("");
-  // 点击页码徽章时保存页码，非空即弹出原文片段浮层。
-  const [activePage, setActivePage] = useState(null);
+  // 同时记录论文编号与页码，避免不同论文的同页片段在弹窗里混淆。
+  const [activeCite, setActiveCite] = useState(null);
 
   async function handleAsk(event) {
     event?.preventDefault();
@@ -111,6 +127,8 @@ export default function AskPage() {
     setAnswer("");
     setSources([]);
     setTrajectory([]);
+    setMode("single");
+    setActiveCite(null);
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/ask`, {
@@ -128,6 +146,7 @@ export default function AskPage() {
       setAnswer(data.answer ?? "");
       setSources(data.sources ?? []);
       setTrajectory(data.trajectory ?? []);
+      setMode(data.mode === "compare" ? "compare" : "single");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -135,9 +154,14 @@ export default function AskPage() {
     }
   }
 
-  // 同一页可能命中多个片段，全部展示，方便核对引用。
-  const pageSources = activePage
-    ? sources.filter((item) => Number(item.page) === activePage)
+  // 同一篇论文的同一页可能命中多个片段，全部展示，方便核对引用。
+  const pageSources = activeCite
+    ? sources.filter(
+        (item) =>
+          Number(item.page) === activeCite.page &&
+          (activeCite.paperIndex == null ||
+            Number(item.paper_index) === activeCite.paperIndex),
+      )
     : [];
 
   return (
@@ -199,21 +223,31 @@ export default function AskPage() {
         <section className="card">
           <h2>回答</h2>
           <AgentTrace trajectory={trajectory} />
-          <AnswerBody answer={answer} onCiteClick={setActivePage} />
+          <AnswerBody
+            answer={answer}
+            mode={mode}
+            onCiteClick={(page, paperIndex) => setActiveCite({ page, paperIndex })}
+          />
           <p className="message">
             以上结论均来自下方检索到的原文片段，点击页码徽章可核对。
           </p>
           {sources.length > 0 ? (
             <>
-              <h3 className="sources-title">参考原文（检索 + 重排后的 top3）</h3>
+              <h3 className="sources-title">参考原文（检索 + 重排后的片段）</h3>
               <ul className="source-list">
                 {sources.map((source, index) => (
                   <li key={`${source.paper_id}-${source.page}-${index}`}>
                     <button
                       type="button"
                       className="source-head"
-                      onClick={() => setActivePage(Number(source.page))}
+                      onClick={() =>
+                        setActiveCite({
+                          page: Number(source.page),
+                          paperIndex: source.paper_index ?? null,
+                        })
+                      }
                     >
+                      {source.paper_index ? `论文${source.paper_index} · ` : ""}
                       {source.filename} · 第{source.page}页
                     </button>
                     <p className="source-text">{source.text}</p>
@@ -225,12 +259,15 @@ export default function AskPage() {
         </section>
       ) : null}
 
-      {activePage ? (
-        <div className="modal-mask" onClick={() => setActivePage(null)}>
+      {activeCite ? (
+        <div className="modal-mask" onClick={() => setActiveCite(null)}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
-              <h3>第{activePage}页 · 原文片段</h3>
-              <button type="button" onClick={() => setActivePage(null)}>
+              <h3>
+                {activeCite.paperIndex ? `论文${activeCite.paperIndex} · ` : ""}
+                第{activeCite.page}页 · 原文片段
+              </h3>
+              <button type="button" onClick={() => setActiveCite(null)}>
                 关闭
               </button>
             </div>

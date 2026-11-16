@@ -272,6 +272,23 @@ tbody tr:last-child td {
   white-space: pre-wrap;
 }
 
+/* 跨论文对比：每个对比点独立成条，论文编号与页码徽章留在对应条内。 */
+.compare-list {
+  display: grid;
+  gap: 12px;
+}
+
+.compare-item {
+  margin: 0;
+  padding: 13px 16px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  background: #f8faff;
+  font-size: 16px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+}
+
 /* 页码引用徽章：蓝色、可点击，是"抗幻觉溯源"最直观的可视化 */
 .cite-badge {
   margin: 0 2px;
