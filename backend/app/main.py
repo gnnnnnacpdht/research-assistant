@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import db, rag
-from .routers import ask, csv_view, papers, translate
+from .routers import ask, csv_view, papers, translate, writing
 
 logging.basicConfig(level=logging.INFO)
 
@@ -58,6 +58,7 @@ app.include_router(papers.router)
 app.include_router(ask.router)
 app.include_router(translate.router)
 app.include_router(csv_view.router)
+app.include_router(writing.router)
 
 
 @app.get("/api/health", tags=["系统"])

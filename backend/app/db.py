@@ -1,6 +1,7 @@
 """SQLite 数据访问层：论文元数据与逐页文本的建表、写入与查询。"""
 
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -287,6 +288,54 @@ def save_survey(paper_id: int, content: str) -> None:
             "INSERT OR REPLACE INTO survey_cache (paper_id, content, created_at) VALUES (?, ?, ?)",
             (paper_id, content, created_at),
         )
+
+
+def _year_from_filename(filename: str) -> int | None:
+    """arXiv 新式 ID 的前四位是 YYMM（1706.03762 → 2017 年），比正文正则更可靠。"""
+    matched = re.match(r"(\d{2})(\d{2})\.\d{4,5}", filename or "")
+    if not matched:
+        return None
+    year = 2000 + int(matched.group(1))
+    month = int(matched.group(2))
+    if 1991 <= year <= 2030 and 1 <= month <= 12:
+        return year
+    return None
+
+
+def list_library_references() -> list[dict]:
+    """返回库内论文的"可引用信息"：标题 + 年份 + 文件名。
+
+    arXiv 论文年份优先从 ID 前缀推断；其它来源退回首页文本里的 4 位年份，
+    都推断不到时年份为空，前端显示"年份未知"。
+    """
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT p.id, p.filename, substr(p.full_text, 1, 1500) AS head,
+                   (SELECT content FROM structure s
+                     WHERE s.paper_id = p.id AND s.type = 'title' LIMIT 1) AS title
+            FROM papers p ORDER BY p.id DESC
+            """
+        ).fetchall()
+
+    results: list[dict] = []
+    for row in rows:
+        filename = str(row["filename"])
+        year = _year_from_filename(filename)
+        if year is None:
+            years = [
+                int(value) for value in re.findall(r"\b((?:19|20)\d{2})\b", row["head"] or "")
+            ]
+            year = max((value for value in years if 1950 <= value <= 2030), default=None)
+        results.append(
+            {
+                "id": int(row["id"]),
+                "filename": filename,
+                "title": str(row["title"] or Path(filename).stem),
+                "year": year,
+            }
+        )
+    return results
 
 
 def delete_paper(paper_id: int) -> dict | None:

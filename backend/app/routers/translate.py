@@ -23,6 +23,17 @@ SYSTEM_PROMPT = (
     "4) 只输出译文本身。"
 )
 
+# 中译英：面向论文摘要/正文段落，强调学术规范而不是逐字直译
+ZH2EN_PROMPT = (
+    "你是学术论文英文学术编辑。把用户给出的中文摘要或段落译成符合学术规范的英文，要求："
+    "1) 使用学术书面语与被动语态（如 is proposed、is evaluated），避免口语化表达与中式英语；"
+    "2) 术语采用领域通行英文写法（如 扩散模型 → diffusion model，注意力机制 → attention mechanism），"
+    "首次出现可用 中文（English） 形式；"
+    "3) 保留原文的引用标记（如 [1]、[2,3]）、公式编号和数字，位置不变；"
+    "4) 不改写原意、不增删论点、不补写数据，不要添加解释或总结；"
+    "5) 只输出英文译文本身。"
+)
+
 
 def _cache_get(text: str) -> str | None:
     with _cache_lock:
@@ -67,6 +78,37 @@ def translate(payload: dict) -> dict:
 
     if translated:
         _cache_put(text, translated)
+    return {"translation": translated, "cached": False}
+
+
+@router.post("/translate/zh2en")
+def translate_zh2en(payload: dict) -> dict:
+    """把中文摘要/段落译成学术英文；与中译共用同一个 LRU 缓存。"""
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text 不能为空")
+    if len(text) > 8000:
+        raise HTTPException(status_code=413, detail="单次翻译文本不能超过 8000 字符")
+
+    # 同一段中文在两个方向上的译文不同，缓存键加方向前缀区分
+    cache_key = "zh2en:" + text
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {"translation": cached, "cached": True}
+
+    try:
+        translated = llm_client.chat(
+            [
+                {"role": "system", "content": ZH2EN_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.1,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if translated:
+        _cache_put(cache_key, translated)
     return {"translation": translated, "cached": False}
 
 

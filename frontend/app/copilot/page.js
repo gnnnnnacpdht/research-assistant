@@ -15,6 +15,7 @@ import {
 import { Bar, Line } from "react-chartjs-2";
 
 import { apiBaseUrl } from "../../lib/apiBase";
+import { FrameworkPanel, Zh2EnPanel } from "./writing-tabs";
 
 ChartJS.register(
   CategoryScale,
@@ -77,6 +78,7 @@ function toNumber(value) {
 
 export default function CopilotPage() {
   const fileRef = useRef(null);
+  const [tab, setTab] = useState("data"); // data | framework | zh2en
   const [analysis, setAnalysis] = useState(null);
   const [rawRows, setRawRows] = useState([]);
   const [chartType, setChartType] = useState("bar");
@@ -197,16 +199,47 @@ export default function CopilotPage() {
   return (
     <main className="container">
       <section className="page-head">
-        <p className="eyebrow">DATA COPILOT</p>
-        <h1>CSV 数据可视化 Copilot</h1>
+        <p className="eyebrow">ACADEMIC COPILOT</p>
+        <h1>学术 Copilot</h1>
         <p className="intro">
-          上传 CSV，自动生成图表与学术 Figure Caption（图表由 Chart.js 渲染，图注由 DeepSeek 生成）。
+          数据可视化、论文框架生成与中译英三个工具：图表与图注、六节框架（引用仅限本地库）、
+          学术规范英文翻译。
         </p>
         <a className="secondary link-back" href="/">
           ← 返回首页
         </a>
       </section>
 
+      <div className="tab-row">
+        <button
+          type="button"
+          className={tab === "data" ? "tab active" : "tab"}
+          onClick={() => setTab("data")}
+        >
+          数据可视化
+        </button>
+        <button
+          type="button"
+          className={tab === "framework" ? "tab active" : "tab"}
+          onClick={() => setTab("framework")}
+        >
+          论文框架
+        </button>
+        <button
+          type="button"
+          className={tab === "zh2en" ? "tab active" : "tab"}
+          onClick={() => setTab("zh2en")}
+        >
+          中译英
+        </button>
+      </div>
+
+      {tab === "framework" ? (
+        <FrameworkPanel />
+      ) : tab === "zh2en" ? (
+        <Zh2EnPanel />
+      ) : (
+        <>
       <section className="card">
         <h2>上传数据</h2>
         <form className="upload-form" onSubmit={handleUpload}>
@@ -320,6 +353,8 @@ export default function CopilotPage() {
           </section>
         </>
       ) : null}
+        </>
+      )}
     </main>
   );
 }

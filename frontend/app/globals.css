@@ -1210,3 +1210,123 @@ button.danger:hover {
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
 }
 
+
+/* ========== 学术写作 Copilot：标签页 / 框架 / 中译英 ========== */
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.tab-row .tab {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.tab-row .tab.active {
+  border-color: #2563eb;
+  box-shadow: none;
+}
+
+.writing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.writing-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.7;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.writing-form button { align-self: flex-start; }
+
+.writing-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.writing-section {
+  padding: 14px 16px;
+  border: 1px solid #e6ecf7;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.writing-section.wide { grid-column: 1 / -1; }
+
+.writing-section h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #3157d5;
+}
+
+.writing-section ul { margin: 0; padding-left: 18px; }
+
+.writing-section li {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.muted { color: #9ca3af; }
+
+.cite-inline {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #3b63d9;
+}
+
+.writing-refs { margin: 0; padding-left: 20px; }
+
+.writing-refs li {
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.mermaid-box {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px dashed #d6e0f5;
+  border-radius: 10px;
+  background: #fff;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.code-box {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.cache-tag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef3ff;
+  color: #3b63d9;
+  font-size: 12px;
+}
+
+.writing-output { margin-top: 16px; }
