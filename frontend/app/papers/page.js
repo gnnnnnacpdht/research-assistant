@@ -4,10 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiBaseUrl } from "../../lib/apiBase";
 
-function formatTime(value) {
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
 // 从文件名里取版本号，如 1706.03762v7.pdf → 7；取不到返回 null
 function parseVersion(name) {
   const matched = /v(\d+)(?=\.pdf|$)/i.exec(name || "");
@@ -329,7 +325,7 @@ export default function PapersPage() {
 
   // ========== 渲染 ==========
   return (
-    <main className="container">
+    <main className="container papers-page">
       <section className="page-head">
         <p className="eyebrow">PAPER LIBRARY</p>
         <h1>论文库</h1>
@@ -346,6 +342,8 @@ export default function PapersPage() {
         </div>
       </section>
 
+      <div className="papers-layout">
+        <div className="papers-left">
       <section className="card">
         <h2>上传 PDF</h2>
         <form className="upload-form" onSubmit={handleUpload}>
@@ -377,8 +375,10 @@ export default function PapersPage() {
         </p>
         {arxivMessage ? <p className="message">{arxivMessage}</p> : null}
       </section>
+        </div>
 
-      <section className="card">
+        <div className="papers-right">
+      <section className="card papers-recommend">
         <div className="list-head">
           <h2>推荐论文</h2>
           <button
@@ -429,7 +429,7 @@ export default function PapersPage() {
         ) : null}
       </section>
 
-      <section className="card">
+      <section className="card papers-list">
         <div className="list-head">
           <h2>已入库论文（{papers.length}）</h2>
           <button className="secondary" type="button" onClick={loadPapers}>
@@ -445,42 +445,39 @@ export default function PapersPage() {
 
         {papers.length > 0 ? (
           <div className="table-wrap">
-            <table>
+            <table className="papers-table">
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th className="paper-id-col">ID</th>
                   <th>文件名</th>
-                  <th>页数</th>
-                  <th>上传时间</th>
-                  <th>操作</th>
+                  <th className="paper-pages-col">页数</th>
+                  <th className="paper-actions-col">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {papers.map((paper) => (
                   <tr key={paper.id}>
                     <td>{paper.id}</td>
-                    <td>
-                      {paper.filename}
-                      {paper.github_url ? (
-                        <a
-                          className="badge-open"
-                          href={paper.github_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={paper.github_url}
-                        >
-                          开源复现
-                        </a>
-                      ) : null}
+                    <td className="paper-filename" title={paper.filename}>
+                      <div className="paper-filename-inner">
+                        <span className="paper-filename-text">{paper.filename}</span>
+                        {paper.github_url ? (
+                          <a
+                            className="badge-open"
+                            href={paper.github_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={paper.github_url}
+                          >
+                            开源复现
+                          </a>
+                        ) : null}
+                      </div>
                     </td>
                     <td>{paper.page_count}</td>
-                    <td>{formatTime(paper.uploaded_at)}</td>
                     <td>
                       <a className="secondary read-link" href={`/read?paper_id=${paper.id}`}>
                         阅读
-                      </a>
-                      <a className="secondary read-link" href={`/graph?paper_id=${paper.id}`}>
-                        图谱
                       </a>
                       <button
                         className="danger"
@@ -497,6 +494,8 @@ export default function PapersPage() {
           </div>
         ) : null}
       </section>
+        </div>
+      </div>
 
       {/* 语义去重预警弹窗 */}
       {dedupeToken ? (

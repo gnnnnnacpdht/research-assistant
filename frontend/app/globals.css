@@ -180,6 +180,49 @@ h1 {
 
 /* ---------- 论文库页面 ---------- */
 
+.papers-page {
+  width: min(1440px, calc(100% - 40px));
+}
+
+.papers-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 24px;
+  align-items: start;
+}
+
+.papers-left,
+.papers-right {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+/* DOM 保留推荐先加载，视觉上始终把已入库列表放在推荐区之前。 */
+.papers-list { order: 1; }
+.papers-recommend { order: 2; }
+
+.papers-table { table-layout: fixed; }
+.papers-table .paper-id-col { width: 46px; }
+.papers-table .paper-pages-col { width: 54px; }
+.papers-table .paper-actions-col { width: 132px; }
+.papers-table th,
+.papers-table td { padding-right: 8px; padding-left: 8px; }
+
+.paper-filename { max-width: 0; }
+.paper-filename-inner { display: flex; align-items: center; min-width: 0; }
+.paper-filename-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paper-filename .badge-open { flex: 0 0 auto; }
+
+@media (min-width: 1024px) {
+  .papers-layout { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+
 .page-head {
   max-width: 720px;
   margin-bottom: 40px;
