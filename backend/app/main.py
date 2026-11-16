@@ -31,11 +31,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 跨域：支持多个前端地址（本地 + Vercel 正式域名 + 预览域名），全部来自环境变量。
+# 跨域：支持多个前端地址（本地 + 各类公网演示域名），全部来自环境变量。
 raw_origins = os.getenv("FRONTEND_ORIGINS") or os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-# Vercel 每次 PR 都会生成随机预览域名，用正则放行，避免反复改环境变量
-origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", r"https://[a-z0-9-]+\.vercel\.app")
+# Vercel 预览域名、cpolar 免费隧道的域名都是随机生成的且会变，
+# 用正则按域名后缀整段放行，避免每次换地址都要改代码/环境变量。
+# 同域部署（前端静态文件由本服务托管）时不会走到跨域分支，此配置仅为分域演示兜底。
+origin_regex = os.getenv(
+    "FRONTEND_ORIGIN_REGEX",
+    r"https?://[a-zA-Z0-9.-]+\.(vercel\.app|cpolar\.cn|cpolar\.top)",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
