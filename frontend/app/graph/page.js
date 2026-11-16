@@ -5,9 +5,10 @@ import { useSearchParams } from "next/navigation";
 import {
   Background,
   Controls,
-  MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -105,6 +106,7 @@ function buildLayout(data) {
 function GraphInner() {
   const searchParams = useSearchParams();
   const paperId = Number(searchParams.get("paper_id") || 24);
+  const reactFlow = useReactFlow();
 
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -198,6 +200,16 @@ function GraphInner() {
 
   const flow = useMemo(() => (data ? buildLayout(data) : { nodes: [], edges: [] }), [data]);
 
+  // 节点数据就绪后再适配一次视野：初次挂载时节点尺寸还没测量完，
+  // fitView 可能按 0 尺寸计算，导致右侧/下方节点被裁出画布。
+  useEffect(() => {
+    if (flow.nodes.length === 0) return undefined;
+    const timer = setTimeout(() => {
+      reactFlow.fitView({ padding: 0.15 });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [flow, reactFlow]);
+
   // 兜底：后端没返回 top5 时，用节点的 importance 现场排序，保证列表不为空
   const top5 = useMemo(() => {
     if (!data) return [];
@@ -260,7 +272,8 @@ function GraphInner() {
             nodes={flow.nodes}
             edges={flow.edges}
             fitView
-            minZoom={0.2}
+            fitViewOptions={{ padding: 0.15 }}
+            minZoom={0.05}
             maxZoom={1.8}
             onNodeClick={(_, node) => setSelected(node.data.meta)}
             onNodeMouseEnter={(_, node) => setHovered(node.data.meta)}
@@ -269,8 +282,28 @@ function GraphInner() {
             edgesFocusable={false}
           >
             <Background gap={18} color="#e2e8f0" />
-            <MiniMap pannable zoomable />
             <Controls showInteractive={false} />
+            {/* 右下角图例：替代原来只会画缩略图的空白 MiniMap */}
+            <Panel position="bottom-right" className="graph-legend">
+              <span className="legend-title">图例</span>
+              <span className="legend-row">
+                <i className="legend-dot root" />
+                本论文
+              </span>
+              <span className="legend-row">
+                <i className="legend-dot high" />
+                基石文献（重要性 ≥ 80）
+              </span>
+              <span className="legend-row">
+                <i className="legend-dot mid" />
+                重要引用（60–79）
+              </span>
+              <span className="legend-row">
+                <i className="legend-dot low" />
+                普通引用（&lt; 60）
+              </span>
+              <span className="legend-note">节点越大 = importance 分数越高</span>
+            </Panel>
           </ReactFlow>
 
           {hovered ? (
