@@ -9,6 +9,24 @@ function formatTime(value) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+// 从文件名里取版本号，如 1706.03762v7.pdf → 7；取不到返回 null
+function parseVersion(name) {
+  const matched = /v(\d+)(?=\.pdf|$)/i.exec(name || "");
+  return matched ? Number(matched[1]) : null;
+}
+
+// 版本提示：新上传的版本比库里旧时提醒"已有更新版本"，避免误覆盖
+function buildVersionHint(newName, duplicates) {
+  const newVersion = parseVersion(newName);
+  if (newVersion === null) return "";
+  const newer = duplicates.find((d) => {
+    const existing = parseVersion(d.filename);
+    return existing !== null && existing > newVersion;
+  });
+  if (!newer) return "";
+  return `库中已有更新版本 ${newer.filename}（v${parseVersion(newer.filename)}），当前上传的是 v${newVersion}，建议保留两个版本而不是覆盖。`;
+}
+
 export default function PapersPage() {
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -295,9 +313,11 @@ export default function PapersPage() {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <h2>⚠️ 疑似重复论文</h2>
             <p className="intro">
-              待上传 <strong>{dedupeFilename}</strong> 与库内已有论文高度相似（语义
-              相似度 ≥ 0.92），请选择处理方式：
+              待上传 <strong>{dedupeFilename}</strong> 与库内已有论文内容高度相似，请选择处理方式：
             </p>
+            {buildVersionHint(dedupeFilename, duplicates) ? (
+              <p className="version-hint">{buildVersionHint(dedupeFilename, duplicates)}</p>
+            ) : null}
             <div className="dup-list">
               {duplicates.map((d) => (
                 <button
@@ -309,11 +329,16 @@ export default function PapersPage() {
                 >
                   <span>
                     <strong>{d.filename}</strong>（ID {d.paper_id}）
+                    {typeof d.similarity === "number" ? (
+                      <span className="sim-badge">
+                        相似度 {(d.similarity * 100).toFixed(1)}%
+                      </span>
+                    ) : null}
                   </span>
                   <span className="dup-hint">
                     {comparing && revisionTargetId === d.paper_id
                       ? "对比中…"
-                      : "点此查看版本差异 →"}
+                      : "点此对比版本差异 →"}
                   </span>
                 </button>
               ))}
@@ -339,7 +364,7 @@ export default function PapersPage() {
                 onClick={() => handleConfirm("keep")}
                 disabled={uploading}
               >
-                保留（作为独立版本）
+                保留两个版本
               </button>
               <button
                 type="button"

@@ -431,6 +431,29 @@ button.danger:hover {
 
 .dup-hint { font-size: 12px; color: #8892a4; }
 
+/* 相似度徽章：把 0.9489 显示成 94.9%，评委一眼能看懂 */
+.sim-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef3ff;
+  color: #3b63d9;
+  font-size: 12px;
+}
+
+/* 版本提示：库中已有更新版本时的高亮提醒 */
+.version-hint {
+  margin: 10px 0 0;
+  padding: 10px 14px;
+  border-left: 3px solid #e6a23c;
+  background: #fdf6ec;
+  color: #8a5a10;
+  font-size: 13px;
+  line-height: 1.6;
+  border-radius: 0 6px 6px 0;
+}
+
 .revision-box {
   background: #f6f8fb;
   border: 1px solid #e0e4ea;
