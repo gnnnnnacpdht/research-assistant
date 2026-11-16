@@ -867,12 +867,46 @@ button.danger:hover {
 
 .graph-drawer-head h2 { margin: 0; font-size: 16px; }
 
-/* 画布右下角图例：说明颜色与节点大小的含义 */
-.graph-legend {
+/* 右下角浮层容器：缩放工具在上，图例在下 */
+.graph-overlay-right {
   position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* 缩放控制：浅灰圆角小方块，悬停变深 */
+.graph-zoom-tools { display: flex; gap: 6px; }
+
+.graph-zoom-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.graph-zoom-btn.wide { width: auto; padding: 0 10px; font-size: 12px; }
+
+.graph-zoom-btn:hover {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+  color: #1d4ed8;
+}
+
+/* 画布右下角图例：说明颜色与节点大小的含义 */
+.graph-legend {
   display: flex;
   flex-direction: column;
   gap: 4px;

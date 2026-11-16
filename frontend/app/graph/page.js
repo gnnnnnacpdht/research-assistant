@@ -17,6 +17,9 @@ const COLOR_KEY = "#F59E0B"; // 基石文献：橙金 + 光晕
 const COLOR_REF = "#3B82F6"; // 普通引用：蓝
 const COLOR_LINK = "#94A3B8";
 const BG = "#F8FAFC"; // 与全站浅色主题一致
+// 初始视图：布局原点（本论文所在）对准画布中心；真实缩放会在力导向结束后按包围盒自适应
+const INITIAL_ZOOM = 1.15;
+const INITIAL_CENTER = [0, 0];
 
 // 标签截断：超过 max 个字符用省略号，避免长标题糊满画布
 function shortTitle(title, max = 12) {
@@ -89,6 +92,8 @@ function buildChartData(data) {
         position: "right",
         fontSize: 12,
         color: "#334155",
+        width: 100, // 限制标签宽度，配合视图预留的右侧空间，避免文字出画布
+        overflow: "truncate",
         formatter: () => shortTitle(node.title),
       },
       meta: node,
@@ -144,11 +149,15 @@ function buildOption(chartData) {
         layout: "force",
         roam: true, // 滚轮缩放 + 拖拽平移
         draggable: true, // 节点可拖动
+        // 明确指定视图原点，避免力导向尚未散开时按初始包围盒取中心，导致整群偏到画布一角
+        center: INITIAL_CENTER,
+        zoom: INITIAL_ZOOM,
         force: {
-          repulsion: 320,
+          repulsion: 300,
           edgeLength: [70, 150],
-          gravity: 0.06,
-          layoutAnimation: true,
+          gravity: 0.1, // 重力稍大，把节点群收拢在画布中央
+          // 关闭布局动画：力导向在首帧前算完，视图不会按"散开前"的小包围盒定格
+          layoutAnimation: false,
         },
         data: chartData.nodes,
         links: chartData.links,
@@ -184,6 +193,9 @@ function GraphInner() {
 
   const chartRef = useRef(null);
   const containerRef = useRef(null);
+  // 初始视图（力导向结束后按节点包围盒算出），复位按钮回到这里
+  const initialViewRef = useRef({ zoom: INITIAL_ZOOM, center: INITIAL_CENTER });
+  const fittedRef = useRef(false);
 
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -222,6 +234,52 @@ function GraphInner() {
     const chart = echarts.init(containerRef.current, null, { renderer: "canvas" });
     chartRef.current = chart;
     chart.setOption(buildOption(chartData), true);
+    initialViewRef.current = { zoom: INITIAL_ZOOM, center: INITIAL_CENTER };
+    fittedRef.current = false;
+
+    // 力导向散开后再按真实包围盒算一次 center/zoom：
+    // 首次渲染时节点还在布局原点附近，ECharts 会按小包围盒定视图，结果整群偏到一角。
+    function fitToNodes() {
+      if (fittedRef.current) return;
+      const seriesData = chart.getModel()?.getSeriesByIndex(0)?.getData?.();
+      if (!seriesData) return;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let index = 0; index < seriesData.count(); index += 1) {
+        const point = seriesData.getItemLayout(index);
+        if (!point || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) continue;
+        minX = Math.min(minX, point[0]);
+        maxX = Math.max(maxX, point[0]);
+        minY = Math.min(minY, point[1]);
+        maxY = Math.max(maxY, point[1]);
+      }
+      if (!Number.isFinite(minX)) return; // 布局还没就绪，等兜底定时器再试
+      fittedRef.current = true;
+
+      const spanX = Math.max(1, maxX - minX);
+      const spanY = Math.max(1, maxY - minY);
+      const width = chart.getWidth();
+      const height = chart.getHeight();
+      const sidePad = 24; // 四周基础留白
+      const labelReserve = 110; // 常显标签在节点右侧展开，额外预留
+      const availW = Math.max(120, width - labelReserve - sidePad);
+      const availH = Math.max(120, height - sidePad * 2);
+      const zoom = Math.min(
+        2,
+        Math.max(0.4, Math.min(availW / spanX, availH / spanY)),
+      );
+      // 让节点包围盒左边缘刚好落在 sidePad 处：剩余宽度自然留给右侧标签
+      // 屏幕 x = width/2 + (x - centerX) * zoom，解出 centerX
+      const center = [minX - (sidePad - width / 2) / zoom, (minY + maxY) / 2];
+      initialViewRef.current = { zoom, center };
+      chart.setOption({ series: [{ zoom, center }] });
+    }
+
+    chart.on("finished", fitToNodes);
+    // 力导向动画被节流时 finished 可能来得晚，兜底再试一次
+    const fitTimer = setTimeout(fitToNodes, 600);
 
     // 点击节点 → 打开右侧抽屉
     chart.on("click", (params) => {
@@ -233,11 +291,29 @@ function GraphInner() {
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);
     return () => {
+      clearTimeout(fitTimer);
+      chart.off("finished", fitToNodes);
       window.removeEventListener("resize", onResize);
       chart.dispose();
       chartRef.current = null;
     };
   }, [chartData]);
+
+  // 缩放按钮：在当前 zoom 基础上乘系数，中心保持用户当前视野
+  function zoomStep(factor) {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const current = Number(chart.getOption().series?.[0]?.zoom) || initialViewRef.current.zoom;
+    const next = Math.min(3, Math.max(0.3, current * factor));
+    chart.setOption({ series: [{ zoom: next }] });
+  }
+
+  // 复位：回到力导向结束后算出的初始视野
+  function resetView() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.setOption({ series: [{ ...initialViewRef.current }] });
+  }
 
   // Esc 关闭抽屉 / 综述弹层
   useEffect(() => {
@@ -368,22 +444,53 @@ function GraphInner() {
         ) : (
           <>
             <div className="graph-chart" ref={containerRef} />
-            {/* 固定图例 */}
-            <div className="graph-legend">
-              <span className="legend-title">图例</span>
-              <span className="legend-row">
-                <i className="legend-dot root" />
-                本论文
-              </span>
-              <span className="legend-row">
-                <i className="legend-dot high" />
-                基石文献（importance 前 15%）
-              </span>
-              <span className="legend-row">
-                <i className="legend-dot ref" />
-                普通引用
-              </span>
-              <span className="legend-note">圆越大 = 影响力（importance）越高</span>
+            {/* 右下角：缩放工具 + 图例，工具压在图例上方 */}
+            <div className="graph-overlay-right">
+              <div className="graph-zoom-tools">
+                <button
+                  type="button"
+                  className="graph-zoom-btn"
+                  aria-label="放大"
+                  title="放大"
+                  onClick={() => zoomStep(1.25)}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="graph-zoom-btn"
+                  aria-label="缩小"
+                  title="缩小"
+                  onClick={() => zoomStep(0.8)}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="graph-zoom-btn wide"
+                  aria-label="复位视图"
+                  title="复位视图"
+                  onClick={resetView}
+                >
+                  复位
+                </button>
+              </div>
+              <div className="graph-legend">
+                <span className="legend-title">图例</span>
+                <span className="legend-row">
+                  <i className="legend-dot root" />
+                  本论文
+                </span>
+                <span className="legend-row">
+                  <i className="legend-dot high" />
+                  基石文献（importance 前 15%）
+                </span>
+                <span className="legend-row">
+                  <i className="legend-dot ref" />
+                  普通引用
+                </span>
+                <span className="legend-note">圆越大 = 影响力（importance）越高</span>
+              </div>
             </div>
           </>
         )}
