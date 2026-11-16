@@ -4,6 +4,10 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 仅用于类型标注，避免 db 模块被迫依赖 PyMuPDF
+    from .pdf_parser import ParsedPage
 
 # 所有持久化数据统一放在 backend/data/，该目录已被 .gitignore 忽略。
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -39,17 +43,32 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
                 page_number INTEGER NOT NULL,
-                text TEXT NOT NULL
+                text TEXT NOT NULL,
+                ocr INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_pages_paper_id ON pages (paper_id);
             """
         )
+        _migrate_pages_ocr_column(connection)
 
 
-def save_paper(filename: str, stored_path: Path, pages: list[tuple[int, str]]) -> dict:
+def _migrate_pages_ocr_column(connection: sqlite3.Connection) -> None:
+    """老库的 pages 表没有 ocr 字段，启动时补上（SQLite 的加列成本很低）。"""
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(pages)").fetchall()
+    }
+    if "ocr" not in columns:
+        connection.execute(
+            "ALTER TABLE pages ADD COLUMN ocr INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+def save_paper(
+    filename: str, stored_path: Path, pages: "list[ParsedPage]"
+) -> dict:
     """写入论文及其分页文本，返回给接口使用的摘要信息。"""
-    full_text = "\n\n".join(text for _, text in pages)
+    full_text = "\n\n".join(page.text for page in pages)
     uploaded_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     with _connect() as connection:
@@ -62,8 +81,11 @@ def save_paper(filename: str, stored_path: Path, pages: list[tuple[int, str]]) -
         )
         paper_id = int(cursor.lastrowid)
         connection.executemany(
-            "INSERT INTO pages (paper_id, page_number, text) VALUES (?, ?, ?)",
-            [(paper_id, page_number, text) for page_number, text in pages],
+            "INSERT INTO pages (paper_id, page_number, text, ocr) VALUES (?, ?, ?, ?)",
+            [
+                (paper_id, page.page_number, page.text, int(page.ocr))
+                for page in pages
+            ],
         )
 
     return {
@@ -72,6 +94,9 @@ def save_paper(filename: str, stored_path: Path, pages: list[tuple[int, str]]) -
         "page_count": len(pages),
         "uploaded_at": uploaded_at,
         "text_chars": len(full_text),
+        "ocr_pages": sum(1 for page in pages if page.ocr),
+        # OCR 失败或页面本身空白时，这些页在检索里查不到，需要提示用户。
+        "empty_pages": sum(1 for page in pages if not page.text.strip()),
     }
 
 

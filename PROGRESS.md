@@ -1,7 +1,34 @@
 # 当前进度快照
 
 更新时间：2026-11-16  
-当前阶段：P0-2 抗幻觉 RAG 问答模块已完成并通过端到端验收，下一步进入 P0-3 语义去重。
+当前阶段：P0-2 RAG 问答已验收；扫描件 OCR 代码完成，等待 SiliconFlow 账户充值后跑通真实识别。
+
+## 2026-11-16 · 扫描件 OCR（P0-1 补充）
+
+- 新增 `backend/app/ocr.py`：页面渲染成 150dpi PNG，走多模态模型识别成纯文本，4 页并发。
+- `pdf_parser.py` 改为逐页判定：提取文字少于 50 字符即视为扫描页，渲染后 OCR，
+  识别结果替代原文本入库；单页失败不影响整篇上传。
+- `pages` 表新增 `ocr` 标记字段，`init_db` 内置老库自动加列迁移。
+- 上传响应新增 `ocr_pages` / `empty_pages` / `warning`，前端在论文库页用红色提示展示。
+- 用本地假视觉接口验证全链路：15 页全部判定为扫描页、全部走 OCR、入库 `ocr=1`，迁移正常。
+
+### 阻塞问题（真实 OCR 未跑通）
+
+- 现象：调用 `Qwen/Qwen3-VL-32B-Instruct` 返回
+  `HTTP 402 {"code":30001,"message":"Sorry, your account balance is insufficient"}`。
+- 同一问题影响 `Qwen/Qwen3-VL-30B-A3B-Instruct`、`PaddlePaddle/PaddleOCR-VL-1.5`、
+  `Qwen/Qwen3-VL-8B-Instruct`；DeepSeek 文本模型正常，BGE-M3 向量化与重排正常。
+- 分析：SiliconFlow 账户余额耗尽（首轮单页试识别曾成功，随后全部 402），
+  与代码无关；已用本地假接口证明请求链路、渲染、入库、标记全部正确。
+- 建议方案（任选其一）：① 给 SiliconFlow 账户充值后重新上传 `pdf/1706.03762v1_img.pdf`；
+  ② 在 `.env` 填 `MULTIMODAL_API_KEY` 并设置 `MULTIMODAL_BASE_URL`/`VISION_MODEL`
+  切换到阿里云百炼 Qwen-VL 或 OpenAI GPT-4o。
+- 充值后预期：上传返回 `ocr_pages: 15, empty_pages: 0`，论文库中该文件出现正文文本。
+
+### 已知问题
+
+- 本地 `uvicorn --reload` 在 Windows 上偶发热重载卡死（日志停在 Reloading 不再启动），
+  联调时建议去掉 `--reload` 或改完代码手动重启。
 
 ## 2026-11-16 · P0-2 抗幻觉 RAG 问答
 
@@ -32,23 +59,16 @@
 ## 本地验证结果
 
 - FastAPI 健康检查返回预期 JSON，Swagger 文档返回 HTTP 200。
-- Next.js 开发服务器出现 `Ready`，首页返回 HTTP 200。
+- Next.js 开发服务器出现 `Ready`，首页返回 HTTP 200，`/papers` 与 `/ask` 页面正常。
 - Next.js 生产构建成功。
-- 已验证可使用项目虚拟环境以后台方式启动 Uvicorn，并启用 `--reload`。
 
-## 下一步从这里开始
+## 下一步
 
-执行 `PROJECT.md` 点火清单第 5 项：实现 **PDF 上传接口 + PyMuPDF 文本提取 + 入库**。
-
-建议先在 `backend/` 完成上传接口与解析逻辑，再用一个矢量 PDF 验证：
-
-1. 文件能够成功上传并保存。
-2. 能提取每页文本，保留文件名和页码。
-3. 解析结果能够持久化，并通过接口查询。
+1. 给 SiliconFlow 充值后重新上传 `pdf/1706.03762v1_img.pdf`，确认 `ocr_pages: 15`。
+2. 进入 P0-3 语义去重（v7 已入库时上传 v1 须基于语义预警）。
 
 ## 尚未开始
 
-- 扫描版 PDF 的多模态 OCR。
-- Chroma + BGE-M3 + DeepSeek 抗幻觉 RAG 问答与原文锚点。
 - 语义去重及版本差异总结。
 - 双语联动阅读、引用图谱、CSV 图表和 arXiv 入库。
+- 541 页长文档 `UnderstandingDeepLearning_02_09_26_C.pdf` 的入库压测。

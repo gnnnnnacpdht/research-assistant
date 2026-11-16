@@ -15,6 +15,8 @@ export default function PapersPage() {
   const [listError, setListError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  // 扫描件 OCR 失败等非致命问题单独存放，用醒目颜色提示但不阻断上传。
+  const [warning, setWarning] = useState("");
   // 用 ref 持有文件输入框：await 之后合成事件的 currentTarget 会被置空，不能再依赖它。
   const fileInputRef = useRef(null);
 
@@ -50,6 +52,7 @@ export default function PapersPage() {
 
     setUploading(true);
     setMessage("");
+    setWarning("");
     const body = new FormData();
     body.append("file", file);
 
@@ -62,9 +65,13 @@ export default function PapersPage() {
       if (!response.ok) {
         throw new Error(data.detail ?? `上传失败（HTTP ${response.status}）`);
       }
+      const ocrNote = data.ocr_pages ? `，其中 ${data.ocr_pages} 页由 OCR 识别` : "";
       setMessage(
-        `已入库：${data.filename}（${data.page_count} 页，${data.text_chars} 字符）`,
+        `已入库：${data.filename}（${data.page_count} 页，${data.text_chars} 字符${ocrNote}）`,
       );
+      if (data.warning) {
+        setWarning(data.warning);
+      }
       // 清空已选文件，方便连续上传下一份。
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -104,6 +111,7 @@ export default function PapersPage() {
           </button>
         </form>
         {message ? <p className="message">{message}</p> : null}
+        {warning ? <p className="message error">{warning}</p> : null}
       </section>
 
       <section className="card">

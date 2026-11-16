@@ -19,6 +19,7 @@ def upload_paper(
 ) -> dict:
     """接收 PDF，保存原文件到 data/pdfs/，逐页提取文本后写入 SQLite。
 
+    没有文字层的扫描页会自动转图片走多模态 OCR，识别结果替代原文本入库。
     解析成功后把向量化丢到后台任务：541 页的长文档要调上百次 embedding，
     放在请求里会超时，但直接返回会让用户以为可以马上提问。
     """
@@ -52,7 +53,15 @@ def upload_paper(
     paper = db.save_paper(filename, stored_path, pages)
     # 响应先返回，索引在后台进行；索引完成后即可参与问答检索。
     background_tasks.add_task(rag.index_paper_safely, paper["id"])
-    return {**paper, "indexing": True}
+
+    result = {**paper, "indexing": True}
+    if paper["empty_pages"]:
+        # 扫描件的 OCR 失败（余额不足、模型未开通）会落到这里，必须让用户看见。
+        result["warning"] = (
+            f"{paper['empty_pages']} 页未提取到文字，OCR 可能失败，"
+            "这些页暂时无法参与问答，请检查多模态模型配置与账户余额"
+        )
+    return result
 
 
 @router.get("")

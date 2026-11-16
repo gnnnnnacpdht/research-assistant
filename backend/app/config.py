@@ -21,6 +21,10 @@ for env_file in (PROJECT_ROOT / ".env", BACKEND_DIR / ".env"):
 # ---- 密钥 ----
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "").strip()
+# 多模态密钥未单独配置时复用 SiliconFlow 的密钥（其平台同时提供 Qwen-VL）。
+MULTIMODAL_API_KEY = (
+    os.getenv("MULTIMODAL_API_KEY", "").strip() or SILICONFLOW_API_KEY
+)
 
 # ---- 接口地址与模型名称（可用环境变量覆盖，默认值即官方推荐配置）----
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
@@ -57,11 +61,29 @@ MIN_PAGE_CHARS = int(os.getenv("MIN_PAGE_CHARS", "30"))
 # 同语言匹配的召回率明显高于跨语言直检（可用环境变量关掉）。
 QUERY_REWRITE = os.getenv("QUERY_REWRITE", "1") == "1"
 
+# ---- 扫描件 OCR ----
+# 多模态接口地址默认与 SiliconFlow 相同；换成 GPT-4o 时改这里和 VISION_MODEL 即可。
+MULTIMODAL_BASE_URL = os.getenv(
+    "MULTIMODAL_BASE_URL", SILICONFLOW_BASE_URL
+).rstrip("/")
+# 平台在售的 Qwen-VL 系列模型；未开通或余额不足会在上传时给出明确报错。
+VISION_MODEL = os.getenv("VISION_MODEL", "Qwen/Qwen3-VL-32B-Instruct")
+# 一页提取出的文字少于该字符数就判定为扫描页，转图片走 OCR。
+OCR_MIN_CHARS = int(os.getenv("OCR_MIN_CHARS", "50"))
+# 渲染分辨率：150dpi 对正文识别足够，且能显著降低图片体积与识别耗时。
+OCR_DPI = int(os.getenv("OCR_DPI", "150"))
+# 并发识别的页数：太高会触发平台限流。
+OCR_CONCURRENCY = int(os.getenv("OCR_CONCURRENCY", "4"))
+
 
 def require_api_key(name: str) -> str:
     """取密钥并在缺失时抛出中文可读错误，便于前端直接展示原因。"""
-    value = {"deepseek": DEEPSEEK_API_KEY, "siliconflow": SILICONFLOW_API_KEY}[name]
+    keys = {
+        "deepseek": (DEEPSEEK_API_KEY, "DEEPSEEK_API_KEY"),
+        "siliconflow": (SILICONFLOW_API_KEY, "SILICONFLOW_API_KEY"),
+        "multimodal": (MULTIMODAL_API_KEY, "MULTIMODAL_API_KEY 或 SILICONFLOW_API_KEY"),
+    }
+    value, env_name = keys[name]
     if not value:
-        env_name = "DEEPSEEK_API_KEY" if name == "deepseek" else "SILICONFLOW_API_KEY"
         raise RuntimeError(f"未配置 {env_name}，请在项目根目录 .env 中填写后重启后端")
     return value
