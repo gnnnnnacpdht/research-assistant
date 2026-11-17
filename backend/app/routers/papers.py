@@ -231,7 +231,11 @@ def fetch_from_arxiv(background_tasks: BackgroundTasks, payload: dict) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"PDF 下载失败：{exc}") from exc
 
-    filename = f"{arxiv_id}.pdf"
+    # 防御性校验：文件名必须是 arXiv ID + .pdf，不能是标题或带路径分隔符。
+    # arxiv_id 已从 URL split("/") 取得，再把所有非安全字符替换成下划线，
+    # 防止未来 arxiv.org 返回格式变化或 title 意外混入。
+    safe_id = re.sub(r"[^\w.\-]", "_", arxiv_id) or arxiv_id
+    filename = f"{safe_id}.pdf"
     db.PDF_DIR.mkdir(parents=True, exist_ok=True)
     tmp_path = db.PDF_DIR / f"pending_{uuid.uuid4().hex}_{filename}"
     tmp_path.write_bytes(content)
