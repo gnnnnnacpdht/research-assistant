@@ -1165,25 +1165,130 @@ button.danger:hover {
   white-space: nowrap;
 }
 
-.read-head-actions {
-  flex: 0 0 auto;
+/* ===== 标题区骨架 shimmer + 独立 retry ===== */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #e2e8f0 0%, #eef2f7 40%, #e2e8f0 80%);
+  background-size: 800px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 6px;
+}
+.read-title-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-width: 520px;
+}
+.read-title-skeleton {
+  display: block;
+  border-radius: 6px;
+}
+.read-title-skeleton-title { height: 18px; width: 62%; }
+.read-title-skeleton-sub    { height: 12px; width: 34%; }
+
+.read-title-wrap-error {
+  flex-direction: row;
+  align-items: center;
   gap: 10px;
+  padding: 4px 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+}
+.read-title-error { color: #dc2626; font-size: 13px; line-height: 1.5; }
+
+/* 真实加载进度文案 */
+.read-page-progress {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
-.page-nav {
+/* ===== 局部错误横幅（右侧翻译面板等）===== */
+.local-error-box {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: #4b5563;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
-.page-nav button,
-.bulk-translate button { white-space: nowrap; }
+/* ===== PDF 画布上的 overlay spinner（翻页中，不挡旧内容）===== */
+.pdf-stage { position: relative; }
 
+.pdf-overlay-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(60%, 360px);
+  max-height: 80%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 24px;
+  background: rgba(255,255,255,0.92);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(2px);
+  z-index: 3;
+  pointer-events: none; /* 让滚轮等仍能穿透画布 */
+}
+.pdf-spinner {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border: 3px solid #e2e8f0;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: pdf-spin 0.8s linear infinite;
+}
+@keyframes pdf-spin { to { transform: rotate(360deg); } }
+.pdf-spinner-text { font-size: 13px; color: #334155; font-weight: 500; }
+
+/* 画布上的局部错误提示（独立于全局 ErrorBanner） */
+.pdf-local-error {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  background: rgba(254, 242, 242, 0.96);
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(220, 38, 38, 0.18);
+  max-width: 88%;
+  min-width: 240px;
+  text-align: center;
+}
+.pdf-local-error-msg { color: #991b1b; font-size: 13px; line-height: 1.5; max-width: 360px; }
+
+/* 移动端调整 */
 @media (max-width: 767px) {
   .read-head { flex-wrap: wrap; gap: 10px; }
   .read-head-left { flex-basis: 100%; flex-wrap: wrap; gap: 8px 12px; }
+  .read-title-wrap { order: 3; flex-basis: 100%; max-width: 100%; }
   .read-title { order: 3; flex-basis: 100%; max-width: 100%; }
   .read-head-actions { width: 100%; justify-content: space-between; }
   .bulk-status { display: none; }

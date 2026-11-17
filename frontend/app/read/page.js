@@ -14,6 +14,21 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs?v=4.10.38-reader2"
 
 const CITATION_RE = /\[(\d{1,3})\]/g;
 
+// 任何 API / PDF 请求超过这个毫秒数一律进入失败状态，不允许永远停在加载中。
+const REQUEST_TIMEOUT_MS = 15_000;
+
+// 帮助函数：带超时的 fetch；超时或网络错误时自动 abort。
+async function fetchWithTimeout(input, init, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function extractCitations(text) {
   const found = new Set();
   for (const match of (text || "").matchAll(CITATION_RE)) {
@@ -127,6 +142,17 @@ function ReadPageInner() {
   const [translationRetry, setTranslationRetry] = useState(0);
   const firstPageReady = visiblePage > 0;
 
+  // 标题/结构化元数据加载状态（独立于 PDF 下载，各自独立超时+重试）
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState("");
+  const [metaRetryKey, setMetaRetryKey] = useState(0);
+  const [pdfError, setPdfError] = useState("");
+  const [pdfRetryKey, setPdfRetryKey] = useState(0);
+  // 统计"已加载页"：docReady 之后，凡是 cache 里已 resolve 的 entry 都算
+  const [loadedPageCount, setLoadedPageCount] = useState(0);
+  // PDF 文档 trailer 是否还在下载中：控制骨架屏显示窗口，独立于 effect 0 元数据速度。
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+
   // 目录面板开合、左右同步滚动开关
   const [tocOpen, setTocOpen] = useState(true);
   const [syncScroll, setSyncScroll] = useState(true);
@@ -222,6 +248,70 @@ function ReadPageInner() {
     return entry.promise;
   }, []);
 
+  // ===== 0. 标题/结构化元数据：独立于 PDF 下载，先拿总页数 & 标题 =====
+  // 用 /api/papers/{id}/page/1 就能拿到 page_count；标题走 /api/papers/{id}/structure。
+  // 两边都带 15s 超时，避免整个阅读页卡死在"加载中"。
+  useEffect(() => {
+    if (!paperId) return;
+    let cancelled = false;
+    setMetaLoading(true);
+    setMetaError("");
+
+    const run = async () => {
+      // 同时拉元数据（page_count）和结构化内容（标题、作者、目录）
+      // 任一路径超时/失败都独立进入失败状态，不相互拖累
+      const fetchWithLocalTimeout = (url, timeout = REQUEST_TIMEOUT_MS) => fetchWithTimeout(url, { cache: "no-store" }, timeout);
+
+      const [pageResp, structResp] = await Promise.allSettled([
+        fetchWithLocalTimeout(`${apiBaseUrl}/api/papers/${paperId}/page/1`),
+        fetchWithLocalTimeout(`${apiBaseUrl}/api/papers/${paperId}/structure`),
+      ]);
+
+      if (cancelled) return;
+
+      // 页码
+      if (pageResp.status === "fulfilled") {
+        const r = pageResp.value;
+        if (r.ok) {
+          const data = await r.json().catch(() => ({}));
+          if (!cancelled && data.page_count) setPageCount((prev) => prev || data.page_count);
+        }
+      }
+
+      // 结构化
+      let structErr = null;
+      let structData = { counts: {}, items: [] };
+      if (structResp.status === "fulfilled") {
+        const r = structResp.value;
+        if (r.ok) {
+          try { structData = await r.json(); } catch (e) { structErr = e; }
+        } else {
+          structErr = new Error(`HTTP ${r.status}`);
+        }
+      } else {
+        structErr = structResp.reason;
+      }
+
+      if (!cancelled) {
+        // 写入 structure state，metaTitle 会自动从里面派生
+        setStructure({ counts: structData.counts || {}, items: structData.items || [] });
+        setStructureError("");
+
+        if (structErr) {
+          const msg = structErr?.name === "AbortError"
+            ? "标题加载超时（超过 15 秒无响应）"
+            : `标题加载失败：${structErr.message || "网络错误"}`;
+          setMetaError(msg);
+        }
+        setMetaLoading(false);
+      }
+    };
+
+    run();
+
+    return () => { cancelled = true; };
+  }, [paperId, metaRetryKey]);
+
   // ===== 1. 加载 PDF 文档（与下方当前页文本请求并行）=====
   useEffect(() => {
     if (!paperId) {
@@ -231,12 +321,15 @@ function ReadPageInner() {
     let cancelled = false;
     let doc = null;
     setError("");
+    setPdfError("");
     setVisiblePage(0);
     setPageRendering(false);
     setPageNum(1);
     setPageCount(0);
+    setLoadedPageCount(0);
     setLoadProgress(0);
     setStatus("正在加载文档 0%…");
+    setPdfDownloading(true);
     translateCacheRef.current.clear();
     referencesLoadedRef.current = 0;
 
@@ -253,14 +346,31 @@ function ReadPageInner() {
         ? Math.min(99, Math.round((loaded / total) * 100))
         : 0;
       setLoadProgress(percent);
-      setStatus(total > 0
-        ? `正在加载文档 ${percent}%…`
-        : `正在加载文档 ${(loaded / 1024 / 1024).toFixed(1)} MB…`);
+      setPdfDownloading(true);
+      // pageCount 可能还没拿到（PDF.js 要到拿到 trailer 才知道总页数），
+      // 所以 total 未就绪时退回文件大小 MB 提示。
+      if (total > 0) {
+        setStatus(`正在加载文档 ${percent}%…`);
+      } else {
+        setStatus(`正在加载文档 ${(loaded / 1024 / 1024).toFixed(1)} MB…`);
+      }
     };
+
+    // 15s 超时保险：pdfjsLib 内部不一定会在网络挂掉时主动 reject，
+    // 用外部定时器兜底，超时后 destroy 任务并置位错误，避免永远卡住。
+    const timeoutTimer = setTimeout(() => {
+      if (cancelled) return;
+      loadingTask.destroy().catch(() => {});
+      if (!cancelled) {
+        setPdfDownloading(false);
+        setPdfError("PDF 加载超时（超过 15 秒无响应），点击重试");
+      }
+    }, REQUEST_TIMEOUT_MS);
 
     (async () => {
       try {
         doc = await loadingTask.promise;
+        clearTimeout(timeoutTimer);
         if (cancelled) {
           doc.destroy();
           return;
@@ -268,20 +378,31 @@ function ReadPageInner() {
         pdfDocRef.current = doc;
         setPageCount(doc.numPages);
         setLoadProgress(100);
+        setLoadedPageCount(0);
+        setPdfDownloading(false);
         setDocReady((value) => value + 1);
+        setPdfError("");
       } catch (err) {
-        if (!cancelled) setError(`PDF 加载失败：${err.message}`);
+        clearTimeout(timeoutTimer);
+        if (!cancelled) {
+          setPdfDownloading(false);
+          const isTimeout = err?.message?.includes("超时") || false;
+          setPdfError(isTimeout
+            ? "PDF 加载超时（超过 15 秒无响应），点击重试"
+            : `PDF 加载失败：${err.message}`);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
+      clearTimeout(timeoutTimer);
       for (const entry of pageCacheRef.current.values()) entry.task?.cancel?.();
       pageCacheRef.current.clear();
       loadingTask.destroy().catch(() => {});
       if (pdfDocRef.current === doc) pdfDocRef.current = null;
     };
-  }, [paperId]);
+  }, [paperId, pdfRetryKey]);
 
   // ===== 2. 当前页优先显示，再空闲预取前后各一页（缓存最多三页）=====
   useEffect(() => {
@@ -293,7 +414,7 @@ function ReadPageInner() {
       if (!doc) return;
       setError("");
       setPageRendering(true);
-      setStatus(`正在渲染第 ${pageNum} 页…`);
+      setStatus(`正在加载第 ${pageNum} 页…`);
 
       // 超出当前页 ±1 的画布立即释放，长文档不会随翻页累积内存。
       for (const [cachedPage, entry] of pageCacheRef.current) {
@@ -310,6 +431,7 @@ function ReadPageInner() {
         setVisiblePage(pageNum);
         setPageRendering(false);
         setStatus("");
+        setLoadedPageCount((value) => Math.min(value + 1, doc.numPages));
 
         // 首页已经可见后才预取邻居，不与首屏争夺带宽和主线程。
         prefetchTimer = window.setTimeout(async () => {
@@ -317,6 +439,7 @@ function ReadPageInner() {
             if (cancelled || neighbor < 1 || neighbor > doc.numPages) continue;
             try {
               await renderPdfPage(neighbor);
+              if (!cancelled) setLoadedPageCount((value) => Math.min(value + 1, doc.numPages));
             } catch (err) {
               if (!cancelled && err?.name !== "RenderingCancelledException") {
                 // 邻居预取失败不影响阅读，真正翻到该页时会重新尝试。
@@ -327,7 +450,9 @@ function ReadPageInner() {
         }, 150);
       } catch (err) {
         if (err?.name !== "RenderingCancelledException" && !cancelled) {
-          setError(`第 ${pageNum} 页渲染失败：${err.message}`);
+          // 翻页渲染失败：不走全局 error（会把整页拉成 ErrorBanner），
+          // 只标 pdfError，让 canvas 区域自己的 overlay spinner + 重试接手。
+          setPdfError(`第 ${pageNum} 页渲染失败：${err.message}`);
           setPageRendering(false);
         }
       }
@@ -354,7 +479,7 @@ function ReadPageInner() {
 
     (async () => {
       try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
           `${apiBaseUrl}/api/papers/${paperId}/page/${pageNum}`,
           { cache: "no-store" },
         );
@@ -363,9 +488,14 @@ function ReadPageInner() {
         if (cancelled) return;
         setPageText(data.text || "");
         setTextReadyPage(pageNum);
-        setPageCount(data.page_count || 0);
+        setPageCount((prev) => prev || data.page_count || 0);
       } catch (err) {
-        if (!cancelled) setTranslationError(`第 ${pageNum} 页文本加载失败：${err.message}`);
+        if (!cancelled) {
+          const msg = err?.name === "AbortError"
+            ? `第 ${pageNum} 页文本加载超时（15 秒无响应）`
+            : `第 ${pageNum} 页文本加载失败：${err.message}`;
+          setTranslationError(msg);
+        }
       }
     })();
 
@@ -387,18 +517,26 @@ function ReadPageInner() {
     setTranslating(true);
     (async () => {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/translate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: pageText }),
-        });
+        const response = await fetchWithTimeout(
+          `${apiBaseUrl}/api/translate`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: pageText }),
+          },
+        );
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail ?? "翻译失败");
         // 即使用户已翻页也保留结果，之后回来不必再调用模型。
         translateCacheRef.current.set(pageNum, data.translation);
         if (!cancelled) setTranslation(data.translation);
       } catch (err) {
-        if (!cancelled) setTranslationError(`第 ${pageNum} 页翻译失败：${err.message}`);
+        if (!cancelled) {
+          const msg = err?.name === "AbortError"
+            ? `第 ${pageNum} 页翻译超时（15 秒无响应）`
+            : `第 ${pageNum} 页翻译失败：${err.message}`;
+          setTranslationError(msg);
+        }
       } finally {
         if (!cancelled) setTranslating(false);
       }
@@ -678,16 +816,34 @@ function ReadPageInner() {
   }
 
   function retryReadFailures() {
-    if (error) {
+    if (error || pdfError) {
       window.location.reload();
       return;
     }
     setTranslationError("");
     setReferencesError("");
     setStructureError("");
+    setMetaError("");
     setTranslationRetry((value) => value + 1);
     setReferencesRetry((value) => value + 1);
     setStructureRetry((value) => value + 1);
+    setMetaRetryKey((value) => value + 1);
+    setPdfRetryKey((value) => value + 1);
+  }
+
+  // 局部 retry：各自独立，不整页 reload
+  function retryMeta() {
+    setMetaError("");
+    setMetaLoading(true);
+    setMetaRetryKey((value) => value + 1);
+  }
+  function retryPdf() {
+    setPdfError("");
+    setPdfRetryKey((value) => value + 1);
+  }
+  function retryText() {
+    setTranslationError("");
+    setTranslationRetry((value) => value + 1);
   }
 
   if (!paperId) {
@@ -713,10 +869,48 @@ function ReadPageInner() {
             <span aria-hidden="true">›</span>
             <span>双语联动阅读</span>
           </nav>
-          <span className="read-title" title={metaTitle?.content || "论文标题加载中"}>
-            {metaTitle?.content || "论文标题加载中…"}
+
+          {/* 标题区：骨架 shimmer / 真实标题 / 失败重试三态 */}
+          {metaError ? (
+            <div className="read-title-wrap read-title-wrap-error">
+              <span className="read-title-error">加载标题失败：{metaError}</span>
+              <button type="button" className="link-button" onClick={retryMeta}>重试</button>
+            </div>
+          ) : (metaLoading || pdfDownloading) ? (
+            // 骨架屏显示窗口 = 元数据加载 + PDF trailer 下载 的并集；
+            // 用 pdfDownloading 而非 docReady===0，因为 PDF.js 在收到 trailer
+            // （知道总页数）前可能已经 resolve，docReady 翻转太快。
+            <div className="read-title-wrap">
+              <span className="read-title-skeleton read-title-skeleton-title shimmer" aria-hidden="true" />
+              <span className="read-title-skeleton read-title-skeleton-sub shimmer" aria-hidden="true" />
+            </div>
+          ) : (
+            <span className="read-title" title={metaTitle?.content || "论文标题"}>
+              {metaTitle?.content || `论文 #${paperId}`}
+            </span>
+          )}
+
+          {/* 进度 / 页码：等 pageCount 有了才显示真实页数 + 已加载页数 */}
+          <span className="read-page-count">
+            {pageCount > 0
+              ? `第 ${pageNum} / ${pageCount} 页`
+              : metaLoading
+                ? `正在加载总页数…`
+                : `第 ${pageNum} 页`}
           </span>
-          <span className="read-page-count">第 {pageNum} / {pageCount || "?"} 页</span>
+          {/* 真实加载进度文案：docReady 后显示"已加载 X / Y 页 (Z%)" */}
+          {pageCount > 0 && (
+            <span className="read-page-progress" aria-live="polite">
+              {visiblePage > 0 && !pageRendering
+                ? `已加载 ${Math.min(loadedPageCount || 1, pageCount)} / ${pageCount} 页（${Math.round(((loadedPageCount || 1) / pageCount) * 100)}%）`
+                : `正在加载 ${Math.min(loadedPageCount + 1, pageCount)} / ${pageCount} 页（${Math.round((Math.min(loadedPageCount + 1, pageCount) / pageCount) * 100)}%）`}
+            </span>
+          )}
+          {metaLoading && !pageCount && (
+            <span className="read-page-progress" aria-live="polite">
+              正在获取总页数…
+            </span>
+          )}
         </div>
         <div className="read-head-actions">
           <div className="page-nav">
@@ -760,7 +954,7 @@ function ReadPageInner() {
       </header>
 
       <ErrorBanner
-        message={error || translationError || referencesError || structureError}
+        message={error || ""}
         onRetry={retryReadFailures}
         onClose={() => {
           setError("");
@@ -826,15 +1020,33 @@ function ReadPageInner() {
           >
             <div className="pdf-stage">
               <div className="pdf-canvas-wrap" ref={canvasWrapRef} />
-              {(visiblePage === 0 || pageRendering) && !error ? (
+
+              {/* 首屏还没渲染出任何页面：用骨架 + 进度条占位 */}
+              {visiblePage === 0 && !pdfError ? (
                 <div className="pdf-loading" role="status" aria-live="polite">
                   <div className="pdf-skeleton-page" aria-hidden="true">
                     <span /><span /><span /><span /><span /><span />
                   </div>
-                  <p>{status || `正在加载第 ${pageNum} 页…`}</p>
+                  <p>{status || `正在加载文档 ${loadProgress}%…`}</p>
                   <div className="pdf-load-track" aria-hidden="true">
                     <span style={{ width: `${visiblePage === 0 ? loadProgress : 100}%` }} />
                   </div>
+                </div>
+              ) : null}
+
+              {/* PDF 下载/渲染失败：局部 spinner + 重试按钮（不整页白屏） */}
+              {pdfError && visiblePage >= 0 ? (
+                <div className="pdf-local-error" role="alert">
+                  <span className="pdf-local-error-msg">{pdfError}</span>
+                  <button type="button" className="secondary" onClick={retryPdf}>重试加载 PDF</button>
+                </div>
+              ) : null}
+
+              {/* 翻页中：已渲染好的内容保留，只在 canvas 上盖一个局部 spinner */}
+              {visiblePage > 0 && pageRendering && !pdfError ? (
+                <div className="pdf-overlay-spinner" role="status" aria-live="polite">
+                  <span className="pdf-spinner" aria-hidden="true" />
+                  <span className="pdf-spinner-text">第 {pageNum} 页加载中</span>
                 </div>
               ) : null}
             </div>
@@ -908,6 +1120,12 @@ function ReadPageInner() {
               ) : null}
 
               <h3 className="pane-title">第 {pageNum} 页译文</h3>
+              {translationError ? (
+                <div className="local-error-box" role="alert">
+                  <span>{translationError}</span>
+                  <button type="button" className="secondary" onClick={retryText}>重试</button>
+                </div>
+              ) : null}
               {translating ? (
                 <LoadingBlock compact label={`正在翻译第 ${pageNum} 页…`} lines={5} />
               ) : translation ? (
