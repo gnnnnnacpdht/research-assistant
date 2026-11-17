@@ -1,23 +1,20 @@
 """引用图谱：解析参考文献 → networkx 建图 → 加权打分找基石文献。
 
-思路：
-1. 正则把 References 拆成 {编号, 作者, 标题, 年份}；
-2. 统计每个编号在正文里被提及的次数（mention），作为"作者重视程度"；
-3. networkx 建有向图（本论文 → 被引文献），边权 = 1 + 提及次数，跑 PageRank；
-4. 叠加"领域经典度"（标题命中 LSTM/ResNet/Adam 等标志性工作）与发表年份新鲜度，
-   合成 0-100 的 importance 分数，取 Top5 作为基石文献。
+同时提供"库内已收录"匹配：用 embedding 余弦相似度把本论文的每一条参考文献
+与库内已有论文的标题/文件名做比对，>0.8 的节点标记 in_library=true，
+让前端可以高亮出来"这条引用其实我们库内也有"。
 """
 
+import math
 import re
 
 import networkx as nx
 
-from . import db
+from . import db, llm_client
 from .structure import CITATION_RE, parse_references
 
 # 领域经典工作关键词 → 经典度（0-1）。命中即认为该文献在本领域影响面大。
 FAMOUS_KEYWORDS: dict[str, float] = {
-    # 具体技术/架构的经典度更高；"attention" 这类通用词在 NMT 领域太普遍，权重压低
     "long short-term memory": 0.95,
     "lstm": 0.95,
     "adam": 0.95,
@@ -45,6 +42,18 @@ TOP_VENUES = ("nips", "neurips", "icml", "iclr", "acl", "emnlp", "naacl", "cvpr"
 TITLE_RE = re.compile(r"^(?P<authors>.+?)\.\s(?P<title>[A-Z][^.]{6,}?)\.\s(?P<rest>.+)$")
 YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
+# 库内匹配阈值：超过这个余弦相似度就认为"这条引用指向的论文，库内也有"
+IN_LIBRARY_THRESHOLD = 0.8
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
 
 def _looks_like_authors(value: str) -> bool:
     """判断一段文本更像作者列表：含 "and" 或多个 "姓, 名" 结构。"""
@@ -66,7 +75,6 @@ def _split_entry(text: str) -> dict:
     matched = TITLE_RE.match(text)
     authors = title = rest = ""
 
-    # 作者名里的缩写（如 "Yann N. Dauphin"）会被误当成"作者. 标题"的分界，需要识别出来
     split_on_initial = bool(matched) and bool(
         re.search(r"(?:^|\s)[A-Z]\.?$", matched.group("authors").strip())
     )
@@ -76,7 +84,6 @@ def _split_entry(text: str) -> dict:
         title = matched.group("title").strip()
         rest = matched.group("rest").strip()
     else:
-        # 兜底：按 ". " 切分后给候选段落打分，挑最像标题的一段
         parts = [part.strip() for part in re.split(r"\.\s+", text) if part.strip()]
         if len(parts) >= 3:
             best_index, best_score = 1, float("-inf")
@@ -92,13 +99,11 @@ def _split_entry(text: str) -> dict:
 
     years = YEAR_RE.findall(text)
     year = int(years[-1]) if years else None
-    # 修复 PDF 断词造成的 "Convolu- tional" 这类粘连
     title = re.sub(r"(\w)- (\w)", r"\1\2", title)
     return {"authors": authors, "title": title, "venue": rest, "year": year}
 
 
 def _fame_score(title: str, venue: str) -> float:
-    """经典度：标题命中知名工作关键词，或发表在顶会/顶刊。"""
     lowered = f"{title} {venue}".lower()
     best = 0.0
     for keyword, weight in FAMOUS_KEYWORDS.items():
@@ -107,6 +112,76 @@ def _fame_score(title: str, venue: str) -> float:
     if any(name in lowered for name in TOP_VENUES):
         best = max(best, 0.6)
     return round(best, 3)
+
+
+def _match_in_library(
+    ref_titles: list[str], max_candidates: int = 200
+) -> list[dict]:
+    """用 embedding 余弦相似度把参考文献标题与库内论文匹配。
+
+    一次 batch 把 ref_titles + 所有库内 title 一起 embed，
+    然后逐对算 cosine，超过 IN_LIBRARY_THRESHOLD 的记下 paper_id 和分数。
+
+    返回与 ref_titles 等长的匹配列表：每个条目含 matched_paper_id 与 score，
+    没匹配到时为空 dict。
+    """
+    if not ref_titles:
+        return []
+
+    library_refs = db.list_library_references()
+    # 候选：每条库内论文用它的结构化 title（优先）+ 去掉扩展名的 filename 各算一个
+    candidates: list[dict] = []
+    seen: set[int] = set()
+    for item in library_refs:
+        if item["id"] in seen:
+            continue
+        seen.add(item["id"])
+        title_text = (item["title"] or "").strip()
+        fname_stem = re.sub(r"\.pdf$", "", item["filename"] or "", flags=re.I).strip()
+        if title_text:
+            candidates.append({"paper_id": item["id"], "text": title_text.lower()})
+        if fname_stem and fname_stem != title_text.lower():
+            candidates.append({"paper_id": item["id"], "text": fname_stem.lower()})
+
+    if not candidates:
+        return [{} for _ in ref_titles]
+
+    # 候选太多时截断，避免一次性 embed 超过 SiliconFlow 限制
+    if len(candidates) > max_candidates:
+        candidates = candidates[:max_candidates]
+
+    texts_to_embed = [t.lower().strip() for t in ref_titles] + [c["text"] for c in candidates]
+    try:
+        vectors = llm_client.embed_texts(texts_to_embed)
+    except Exception:
+        # embedding 不可用时降级：返回空匹配，不要让整个图谱接口挂掉
+        return [{} for _ in ref_titles]
+
+    ref_vecs = vectors[: len(ref_titles)]
+    cand_vecs = vectors[len(ref_titles) :]
+
+    matches: list[dict] = []
+    for ref_idx, ref_vec in enumerate(ref_vecs):
+        best_paper_id: int | None = None
+        best_score = 0.0
+        for cand_idx, cand in enumerate(candidates):
+            score = cosine(ref_vec, cand_vecs[cand_idx])
+            # 同一 paper_id 的多个候选只保留分最高的
+            if score > best_score and score >= IN_LIBRARY_THRESHOLD:
+                # 如果已经有同一 paper_id 更先被匹配到，也允许更新为更高分
+                if best_paper_id is None or candidates[cand_idx]["paper_id"] != best_paper_id or score > best_score:
+                    best_score = score
+                    best_paper_id = candidates[cand_idx]["paper_id"]
+
+        if best_paper_id is not None:
+            matches.append({
+                "paper_id": best_paper_id,
+                "score": round(best_score, 4),
+            })
+        else:
+            matches.append({})
+
+    return matches
 
 
 def build_citation_graph(paper_id: int) -> dict:
@@ -118,6 +193,19 @@ def build_citation_graph(paper_id: int) -> dict:
     pages = db.get_pages(paper_id)
     parsed = parse_references(pages)
     entries = parsed["entries"]
+
+    if not entries:
+        # 没有参考文献：返回明确提示，让调用方知道不是网络或解析出错
+        return {
+            "paper_id": paper_id,
+            "filename": paper["filename"],
+            "nodes": [],
+            "edges": [],
+            "top5": [],
+            "reference_page": None,
+            "node_count": 0,
+            "message": "该论文未解析到参考文献列表",
+        }
 
     # 正文提及次数：只统计 References 之前的页面
     reference_page = parsed.get("reference_page")
@@ -133,24 +221,50 @@ def build_citation_graph(paper_id: int) -> dict:
     root_id = f"paper-{paper_id}"
     graph.add_node(root_id, kind="root")
 
+    # 先截取最多 30 条，避免图太大；in_library 匹配也只要处理这部分
+    max_entries = 30
+    entries = entries[:max_entries]
+
+    # 准备 in_library 匹配：拿到每条 entry 的 title
+    entry_titles: list[str] = []
     node_meta: dict[str, dict] = {}
     for entry in entries:
         node_id = f"ref-{entry['index']}"
         detail = _split_entry(entry["text"])
         fame = _fame_score(detail["title"], detail["venue"])
         graph.add_node(node_id, kind="reference", fame=fame)
-        graph.add_edge(root_id, node_id, weight=1 + mentions.get(entry["index"], 0))
+        # 边的 source_page = 这条引用在原论文里所在的参考文献页
+        graph.add_edge(root_id, node_id, weight=1 + mentions.get(entry["index"], 0),
+                       source_page=entry["page"])
         node_meta[node_id] = {
             "id": node_id,
             "index": entry["index"],
             "page": entry["page"],
+            "source_page": entry["page"],  # 冗余一份，方便前端直接取
             "text": entry["text"],
             "mentions": mentions.get(entry["index"], 0),
             "fame": fame,
             **detail,
         }
+        entry_titles.append(detail["title"])
 
-    # PageRank：边权越大表示本论文越依赖该文献
+    # 库内匹配
+    try:
+        match_results = _match_in_library(entry_titles)
+    except Exception:
+        match_results = [{} for _ in entry_titles]
+
+    for offset, entry in enumerate(entries):
+        node_id = f"ref-{entry['index']}"
+        match = match_results[offset] if offset < len(match_results) else {}
+        if match:
+            node_meta[node_id]["in_library"] = True
+            node_meta[node_id]["in_library_paper_id"] = match.get("paper_id")
+            node_meta[node_id]["in_library_score"] = match.get("score")
+        else:
+            node_meta[node_id]["in_library"] = False
+
+    # PageRank
     try:
         ranks = nx.pagerank(graph, weight="weight")
     except Exception:
@@ -164,18 +278,16 @@ def build_citation_graph(paper_id: int) -> dict:
     for node_id, meta in node_meta.items():
         rank_norm = ranks.get(node_id, 0) / max_rank
         mention_norm = meta["mentions"] / max_mentions
-        # 年份新鲜度：越接近最新年份越高，老经典打折但不为零
         recency = 0.0
         if meta["year"]:
             recency = max(0.0, 1 - (current_year - meta["year"]) / 20)
 
-        # 加权：图结构 35% + 被提及强度 15% + 领域经典度 40% + 新鲜度 10%
         importance = 100 * (
             0.35 * rank_norm + 0.15 * mention_norm + 0.40 * meta["fame"] + 0.10 * recency
         )
         nodes.append(
             {
-                "kind": "reference",  # 前端据此区分中心节点与引用节点
+                "kind": "reference",
                 **meta,
                 "importance": round(importance, 1),
                 "pagerank": round(ranks.get(node_id, 0), 6),
@@ -216,7 +328,9 @@ def build_citation_graph(paper_id: int) -> dict:
         "mentions": 0,
         "importance": 100.0,
         "page": 1,
+        "source_page": 1,
         "text": f"本论文：{paper['filename']}",
+        "in_library": False,
     }
 
     return {
@@ -224,7 +338,12 @@ def build_citation_graph(paper_id: int) -> dict:
         "filename": paper["filename"],
         "nodes": [root_node] + nodes,
         "edges": [
-            {"source": root_id, "target": node["id"], "weight": 1 + node["mentions"]}
+            {
+                "source": root_id,
+                "target": node["id"],
+                "weight": 1 + node["mentions"],
+                "source_page": node["source_page"],
+            }
             for node in nodes
         ],
         "top5": top5,
