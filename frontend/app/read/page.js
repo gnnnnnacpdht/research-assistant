@@ -109,9 +109,7 @@ function HeadingTree({ nodes, onJump, activeKey }) {
   );
 }
 
-function ReadPageInner() {
-  const searchParams = useSearchParams();
-  const paperId = Number(searchParams.get("paper_id") || 0);
+function ReadView({ paperId }) {
 
   const canvasWrapRef = useRef(null);
   const pdfDocRef = useRef(null);
@@ -1283,6 +1281,37 @@ function ReadPageInner() {
       ) : null}
     </main>
   );
+}
+
+// 未指定 paper_id 时自动选中最新一篇，避免把 0 当成论文 ID 去请求。
+function ReadPageInner() {
+  const searchParams = useSearchParams();
+  const requestedPaperId = Number(searchParams.get("paper_id")) || 0;
+  const [fallbackPaperId, setFallbackPaperId] = useState(0);
+
+  useEffect(() => {
+    if (requestedPaperId) return undefined;
+    let cancelled = false;
+    fetch(`${apiBaseUrl}/api/papers`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (cancelled) return;
+        setFallbackPaperId(Array.isArray(list) && list.length > 0 ? list[0].id : 0);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [requestedPaperId]);
+
+  const paperId = requestedPaperId || fallbackPaperId;
+  if (!paperId) {
+    return (
+      <main className="container">
+        <p className="message">还没有可用论文，请先到论文库上传。</p>
+        <a className="secondary" href="/papers">前往论文库</a>
+      </main>
+    );
+  }
+  return <ReadView paperId={paperId} />;
 }
 
 export default function ReadPage() {

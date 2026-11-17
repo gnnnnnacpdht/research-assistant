@@ -6,8 +6,8 @@ import { usePathname } from "next/navigation";
 const NAV_ITEMS = [
   { href: "/papers", label: "论文库" },
   { href: "/ask", label: "智能问答" },
-  { href: "/read?paper_id=24", label: "双语阅读", match: "/read" },
-  { href: "/graph?paper_id=24", label: "引用图谱", match: "/graph" },
+  { href: "/read", label: "双语阅读", match: "/read" },
+  { href: "/graph", label: "引用图谱", match: "/graph" },
   { href: "/copilot", label: "Copilot" },
 ];
 

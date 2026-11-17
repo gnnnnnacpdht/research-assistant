@@ -14,13 +14,13 @@ const entries = [
     description: "抗幻觉 RAG，答案带页码引用与 Agent 推理轨迹",
   },
   {
-    href: "/read?paper_id=24",
+    href: "/read",
     icon: "📖",
     title: "双语阅读",
     description: "原版 PDF + 中文翻译，划词翻译与引用跳转",
   },
   {
-    href: "/graph?paper_id=24",
+    href: "/graph",
     icon: "🕸️",
     title: "引用图谱",
     description: "引用网络可视化，基石文献挖掘与自动综述",

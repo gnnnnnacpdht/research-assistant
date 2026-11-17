@@ -270,10 +270,17 @@ function SingleGraphTab({ paperId, papers, onPaperChange }) {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async (pid) => {
+    if (!pid) { setData(null); setError(""); setLoading(false); return; }
     setLoading(true); setError(""); setData(null);
     try {
       const resp = await fetch(`${apiBaseUrl}/api/graph/paper/${pid}`, { cache: "no-store" });
       const j = await resp.json().catch(() => ({}));
+      if (resp.status === 404) {
+        // 论文已不存在（被删除或来自过期链接）：清空选择，回到“请选择论文”，不进入错误态。
+        onPaperChange(null);
+        setError("");
+        return;
+      }
       if (!resp.ok) throw new Error(j.detail ?? "单篇图谱加载失败");
       setData(j);
     } catch (err) {
@@ -281,7 +288,7 @@ function SingleGraphTab({ paperId, papers, onPaperChange }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onPaperChange]);
 
   useEffect(() => { load(paperId); }, [paperId, load]);
 
@@ -349,7 +356,47 @@ function SingleGraphTab({ paperId, papers, onPaperChange }) {
   }
 
   if (loading) return <LoadingBlock label="正在解析参考文献并构建单篇图谱…" lines={5} />;
-  if (error) return <ErrorBanner message={`加载失败：${error}`} onRetry={() => load(paperId)} onClose={() => setError("")} />;
+
+  const picker = (
+    <div className="graph-picker">
+      <label>选择论文</label>
+      <select
+        className="paper-select"
+        value={paperId ?? ""}
+        onChange={(e) => onPaperChange(Number(e.target.value))}
+      >
+        {!paperId ? <option value="">请选择论文</option> : null}
+        {papers.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.id} · {p.filename}
+          </option>
+        ))}
+      </select>
+      <button className="secondary" type="button" onClick={() => load(paperId)} disabled={!paperId}>
+        刷新
+      </button>
+    </div>
+  );
+
+  // 未选择或所选论文已不存在：只展示下拉框与提示，绝不卡在错误状态。
+  if (!paperId) {
+    return (
+      <div className="graph-tab-body">
+        {picker}
+        <p className="message">请选择论文</p>
+      </div>
+    );
+  }
+
+  // 出错时保留选择器，用户可直接换一篇，不用刷新页面。
+  if (error) {
+    return (
+      <div className="graph-tab-body">
+        {picker}
+        <ErrorBanner message={`加载失败：${error}`} onRetry={() => load(paperId)} onClose={() => setError("")} />
+      </div>
+    );
+  }
 
   if (!data) return null;
 
@@ -358,23 +405,7 @@ function SingleGraphTab({ paperId, papers, onPaperChange }) {
   return (
     <div className="graph-tab-body">
       {/* 论文选择器 */}
-      <div className="graph-picker">
-        <label>选择论文</label>
-        <select
-          className="paper-select"
-          value={paperId}
-          onChange={(e) => onPaperChange(Number(e.target.value))}
-        >
-          {papers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.id} · {p.filename}
-            </option>
-          ))}
-        </select>
-        <button className="secondary" type="button" onClick={() => load(paperId)}>
-          刷新
-        </button>
-      </div>
+      {picker}
 
       {/* 统计条 */}
       {!empty ? (
@@ -561,20 +592,30 @@ export default function GraphPage() {
 
 function GraphPageInner() {
   const searchParams = useSearchParams();
-  const initialPaperId = Number(searchParams.get("paper_id") || 24);
+  // 不再写死默认论文 ID；URL 里的 paper_id 只作为“希望打开哪篇”的提示。
+  const requestedPaperId = Number(searchParams.get("paper_id")) || null;
   const [tab, setTab] = useState("single"); // single | global
-  const [paperId, setPaperId] = useState(initialPaperId);
+  const [paperId, setPaperId] = useState(null);
   const [papers, setPapers] = useState([]);
 
-  // 加载论文下拉选
+  // 先拉论文列表再决定默认选中：URL 指定且存在则用它，否则回退到最新一篇（列表按 id 倒序）。
   useEffect(() => {
     let cancelled = false;
     fetch(`${apiBaseUrl}/api/papers`, { cache: "no-store" })
-      .then((r) => r.json().catch(() => []))
-      .then((list) => { if (!cancelled) setPapers(list || []); })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (cancelled) return;
+        const items = Array.isArray(list) ? list : [];
+        setPapers(items);
+        setPaperId((current) => {
+          if (current && items.some((p) => p.id === current)) return current;
+          if (requestedPaperId && items.some((p) => p.id === requestedPaperId)) return requestedPaperId;
+          return items[0]?.id ?? null;
+        });
+      })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [requestedPaperId]);
 
   return (
     <main className="container graph-page">
