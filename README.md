@@ -4,11 +4,11 @@
 
 ## 公网演示
 
-**评审入口：<http://25d17385.r1.cpolar.top>**
+**评审入口：<http：//4b1ae8ad.r59.cpolar.top>**
 
 - 前端与后端 API 同域部署，打开上述地址即可使用，无需登录。
-- Swagger 接口文档：<http://25d17385.r1.cpolar.top/docs>
-- 健康检查：<http://25d17385.r1.cpolar.top/api/health>
+- Swagger 接口文档：<http://4b1ae8ad.r59.cpolar.top/docs>
+- 健康检查：<http://4b1ae8ad.r59.cpolar.top/api/health>
 - **服务由内网穿透承载，评审时段保持在线。** 演示依赖开发机、本地服务与 cpolar 隧道持续运行；免费隧道的随机域名在隧道重建后可能变化。
 
 ### 使用说明
