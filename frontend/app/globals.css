@@ -2259,6 +2259,19 @@ button.danger:hover:not(:disabled) { border-color: var(--danger); background: #f
 
 .legend-dot.inlib { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.7); }
 
+/* 全局图谱：有节点但暂无跨库引用边时的如实说明 */
+.graph-no-edge-note {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 6px 6px 0;
+}
+
 @media (max-width: 767px) {
   .site-header-inner { width: calc(100% - 32px); }
   .nav-toggle { display: block; }

@@ -137,10 +137,14 @@ function buildGlobalChartOption(chartData) {
     series: [
       {
         type: "graph",
-        layout: "force",
+        layout: "none", // 环形固定坐标，孤立节点也不会被甩到画布外
         roam: true,
         draggable: true,
-        force: { repulsion: 260, edgeLength: [80, 160], gravity: 0.1, layoutAnimation: false },
+        // 节点坐标以原点为中心排布，这里固定中心点和缩放，
+        // 不再做自适应 fit（graph 系列的 getItemLayout 返回像素坐标，
+        // 用像素去反算 center 会把节点推出可视区）。
+        center: [0, 0],
+        zoom: 1,
         data: chartData.nodes,
         links: chartData.links,
         lineStyle: { color: COLOR_LINK, opacity: 0.4, width: 1.2, curveness: 0.15 },
@@ -221,17 +225,28 @@ function buildSingleChartData(data) {
 }
 
 // ====== 全局跨库图谱 ======
+// 跨库图谱节点数通常不多（几篇论文），用固定的环形布局比力导向更稳：
+// 力导向下孤立节点会被斥力甩到画布角落，看起来像坏了。
 function buildGlobalChartData(data) {
-  const nodes = (data.nodes || []).map((n) => ({
-    id: n.id,
-    name: shortTitle(n.title || n.id, 16),
-    symbolSize: 26,
-    itemStyle: { color: COLOR_ROOT, borderColor: "#fff", borderWidth: 1.5,
-                 shadowBlur: 10, shadowColor: "rgba(29,78,216,0.3)" },
-    label: { show: true, position: "right", fontSize: 12, color: "#334155",
-             width: 160, overflow: "truncate", formatter: () => shortTitle(n.title, 18) },
-    meta: n,
-  }));
+  const list = data.nodes || [];
+  const count = list.length;
+  const radius = count <= 1 ? 0 : 96 + count * 8;
+
+  const nodes = list.map((n, index) => {
+    const angle = (2 * Math.PI * index) / Math.max(1, count) - Math.PI / 2;
+    return {
+      id: n.id,
+      name: shortTitle(n.title || n.id, 16),
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      symbolSize: 26,
+      itemStyle: { color: COLOR_ROOT, borderColor: "#fff", borderWidth: 1.5,
+                   shadowBlur: 10, shadowColor: "rgba(29,78,216,0.3)" },
+      label: { show: true, position: "right", fontSize: 12, color: "#334155",
+               width: 160, overflow: "truncate", formatter: () => shortTitle(n.title, 18) },
+      meta: n,
+    };
+  });
 
   const links = (data.edges || []).map((e) => ({
     source: e.source, target: e.target,
@@ -423,8 +438,7 @@ function SingleGraphTab({ paperId, papers, onPaperChange }) {
 function GlobalGraphTab() {
   const chartRef = useRef(null);
   const containerRef = useRef(null);
-  const initialViewRef = useRef({ zoom: INITIAL_ZOOM, center: INITIAL_CENTER });
-  const fittedRef = useRef(false);
+  const initialViewRef = useRef({ zoom: 1, center: [0, 0] });
 
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -450,34 +464,9 @@ function GlobalGraphTab() {
     const chart = echarts.init(containerRef.current, null, { renderer: "canvas" });
     chartRef.current = chart;
     chart.setOption(buildGlobalChartOption(chartData), true);
-    initialViewRef.current = { zoom: INITIAL_ZOOM, center: INITIAL_CENTER };
-    fittedRef.current = false;
+    // 环形布局坐标固定，复位点就是初始缩放 1 / 原点居中
+    initialViewRef.current = { zoom: 1, center: [0, 0] };
 
-    function fit() {
-      if (fittedRef.current) return;
-      const sd = chart.getModel()?.getSeriesByIndex(0)?.getData?.();
-      if (!sd) return;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (let i = 0; i < sd.count(); i += 1) {
-        const p = sd.getItemLayout(i);
-        if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
-        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
-        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
-      }
-      if (!Number.isFinite(minX)) return;
-      fittedRef.current = true;
-      const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
-      const w = chart.getWidth(), h = chart.getHeight();
-      const sidePad = 24, labelReserve = 180;
-      const availW = Math.max(120, w - labelReserve - sidePad);
-      const availH = Math.max(120, h - sidePad * 2);
-      const zoom = Math.min(2, Math.max(0.3, Math.min(availW / spanX, availH / spanY)));
-      const center = [minX - (sidePad - w / 2) / zoom, (minY + maxY) / 2];
-      initialViewRef.current = { zoom, center };
-      chart.setOption({ series: [{ zoom, center }] });
-    }
-    chart.on("finished", fit);
-    const t = setTimeout(fit, 600);
     chart.on("click", (params) => {
       if (params.dataType === "node" && params.data?.meta?.paper_id) {
         window.open(`/read?paper_id=${params.data.meta.paper_id}`, "_blank");
@@ -486,7 +475,6 @@ function GlobalGraphTab() {
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);
     return () => {
-      clearTimeout(t); chart.off("finished", fit);
       window.removeEventListener("resize", onResize); chart.dispose();
       chartRef.current = null;
     };
@@ -507,6 +495,11 @@ function GlobalGraphTab() {
   if (!data) return null;
 
   const empty = !data.nodes || data.nodes.length === 0;
+  // 有节点但没有一条跨库引用边：图仍可展示孤立节点，但必须如实说明为什么没有连线，
+  // 否则用户会误以为功能坏了。
+  const noEdges = !empty && (!data.edges || data.edges.length === 0);
+  const NO_EDGE_NOTE =
+    "本图谱基于库内论文的相互引用关系生成；当前库内论文间暂无直接引用，故仅显示节点。上传更多同领域论文后关系网会更丰富。";
 
   return (
     <div className="graph-tab-body">
@@ -527,7 +520,7 @@ function GlobalGraphTab() {
           <div className="graph-empty">
             <EmptyState
               title="跨库引用网络为空"
-              description={data.message || "当前库内论文之间还没有互相引用的匹配。先多上传几篇同领域论文再看。"}
+              description={data.message || NO_EDGE_NOTE}
               actionLabel="返回论文库"
               actionHref="/papers"
             />
@@ -549,6 +542,10 @@ function GlobalGraphTab() {
           </>
         )}
       </div>
+
+      {noEdges ? (
+        <p className="graph-no-edge-note">{NO_EDGE_NOTE}</p>
+      ) : null}
     </div>
   );
 }
